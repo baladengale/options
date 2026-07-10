@@ -1,0 +1,30 @@
+# Databases — never commit
+db/*.db
+db/*.sqlite
+db/*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI assistant
+.claude/
+
+# Config with potential credentials
+.env
+config/local.yaml
