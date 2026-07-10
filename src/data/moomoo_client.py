@@ -13,6 +13,7 @@ Usage:
     client.close()
 """
 
+import time
 from datetime import date, datetime
 from typing import Optional
 
@@ -37,16 +38,26 @@ from src.data.models import StockSnapshot, OptionSnapshot
 class MoomooClient:
     """Thin wrapper over moomoo OpenQuoteContext. Returns typed dataclasses."""
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 11111):
+    def __init__(self, host: str = '127.0.0.1', port: int = 11111, rate_limit: float = 0.35):
         self._ctx: Optional[OpenQuoteContext] = None
         self._host = host
         self._port = port
+        self._rate_limit = rate_limit  # seconds between API calls to avoid moomoo throttling
+        self._last_call = 0.0
 
     @property
     def ctx(self) -> OpenQuoteContext:
         if self._ctx is None:
             self._ctx = OpenQuoteContext(host=self._host, port=self._port, ai_type=1)
         return self._ctx
+
+    def _throttle(self):
+        """Sleep if needed to respect moomoo API rate limits (~3 calls/sec)."""
+        now = time.time()
+        gap = now - self._last_call
+        if gap < self._rate_limit:
+            time.sleep(self._rate_limit - gap)
+        self._last_call = time.time()
 
     def close(self):
         if self._ctx is not None:
@@ -75,6 +86,7 @@ class MoomooClient:
 
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i:i + batch_size]
+            self._throttle()
             ret, data = self.ctx.get_market_snapshot(batch)
             if ret != RET_OK or data is None or len(data) == 0:
                 continue
@@ -142,7 +154,8 @@ class MoomooClient:
     def get_option_chain_codes(
         self, ticker: str, dte_min: int = 30, dte_max: int = 45
     ) -> list[str]:
-        """Get option codes for a ticker within DTE range. Chunks 30-day API limit."""
+        """Get option codes for a ticker within DTE range. Chunks 30-day API limit.
+        Includes rate limiting and retry to avoid moomoo throttling (ret=-1)."""
         today = date.today()
         from datetime import timedelta
         codes = []
@@ -155,7 +168,17 @@ class MoomooClient:
             start = (today + timedelta(days=chunk_start)).isoformat()
             end = (today + timedelta(days=chunk_end)).isoformat()
 
-            ret, data = self.ctx.get_option_chain(ticker, start=start, end=end)
+            # Rate limit: sleep before each get_option_chain call
+            self._throttle()
+
+            # Retry up to 2 times on rate-limit failure (ret=-1)
+            for attempt in range(3):
+                ret, data = self.ctx.get_option_chain(ticker, start=start, end=end)
+                if ret == RET_OK:
+                    break
+                if attempt < 2:
+                    time.sleep(1.0 * (attempt + 1))  # backoff: 1s, 2s
+
             if ret == RET_OK and data is not None and len(data) > 0:
                 for code in data['code']:
                     if code not in seen:
@@ -181,6 +204,7 @@ class MoomooClient:
 
         for i in range(0, len(codes), batch_size):
             batch = codes[i:i + batch_size]
+            self._throttle()
             ret, data = self.ctx.get_market_snapshot(batch)
             if ret != RET_OK or data is None or len(data) == 0:
                 continue
@@ -265,6 +289,7 @@ class MoomooClient:
         results: list[OptionSnapshot] = []
         for i in range(0, len(all_codes), 400):
             batch = all_codes[i:i + 400]
+            self._throttle()
             ret, data = self.ctx.get_market_snapshot(batch)
             if ret != RET_OK or data is None or len(data) == 0:
                 continue
@@ -320,6 +345,7 @@ class MoomooClient:
         """Get daily OHLCV history. Returns list of dicts with keys:
         date, open, high, low, close, volume."""
         from moomoo import KLType, AuType
+        self._throttle()
         ret, data, _ = self.ctx.request_history_kline(
             ticker, max_count=days, ktype=KLType.K_DAY, autype=AuType.QFQ
         )

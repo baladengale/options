@@ -17,7 +17,9 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
+import time
 import warnings
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -62,6 +64,94 @@ _DEFAULT_WATCHLIST = [
 MAX_MARGIN_PCT = 30.0
 
 
+def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max: int = 90) -> list:
+    """
+    Fetch option chain with retry + yfinance fallback.
+    Moomoo OpenD rate-limits after multiple large chain requests.
+    Retry once, then fall back to yfinance if moomoo returns empty.
+    """
+    # Try moomoo with retry
+    for attempt in range(2):
+        if attempt > 0:
+            time.sleep(3)
+        contracts = moomoo.get_option_snapshots(ticker, dte_min=dte_min, dte_max=dte_max)
+        if contracts:
+            return contracts
+
+    # Fallback: yfinance
+    try:
+        import yfinance as yf
+        yf_ticker = ticker.replace('US.', '')
+        stock = yf.Ticker(yf_ticker)
+
+        expiries = stock.options
+        if not expiries:
+            return []
+
+        today = date.today()
+        from datetime import timedelta
+        min_date = today + timedelta(days=dte_min)
+        max_date = today + timedelta(days=dte_max)
+
+        contracts = []
+        for exp_str in expiries:
+            try:
+                exp_date = date.fromisoformat(exp_str)
+            except Exception:
+                continue
+            if not (min_date <= exp_date <= max_date):
+                continue
+
+            chain = stock.option_chain(exp_str)
+            dte_val = (exp_date - today).days
+
+            for _, row in chain.calls.iterrows():
+                contracts.append(_yf_to_option_snapshot(
+                    ticker, 'CALL', row, exp_str, dte_val))
+            for _, row in chain.puts.iterrows():
+                contracts.append(_yf_to_option_snapshot(
+                    ticker, 'PUT', row, exp_str, dte_val))
+            time.sleep(0.3)  # yfinance rate limit
+
+        return contracts
+    except Exception:
+        return []
+
+
+def _yf_to_option_snapshot(ticker: str, opt_type: str, row, expiry: str, dte: int):
+    """Convert yfinance option row to OptionSnapshot-compatible object."""
+    from src.data.models import OptionSnapshot
+
+    def nf(v, d=0.0):
+        try: return float(v) if v is not None else d
+        except: return d
+
+    strike = nf(row.get('strike'))
+    return OptionSnapshot(
+        code=f'{ticker}{expiry.replace("-","")[2:]}{"C" if opt_type=="CALL" else "P"}{int(strike*1000):08d}',
+        name='',
+        underlying=ticker,
+        option_type=opt_type,
+        strike=strike,
+        expiry=expiry,
+        dte=dte,
+        area_type='AMERICAN',
+        last_price=nf(row.get('lastPrice')),
+        bid=nf(row.get('bid')),
+        ask=nf(row.get('ask')),
+        volume=int(nf(row.get('volume'))),
+        delta=nf(row.get('delta')),
+        gamma=nf(row.get('gamma')),
+        theta=nf(row.get('theta')),
+        vega=nf(row.get('vega')),
+        rho=nf(row.get('rho')),
+        implied_vol=nf(row.get('impliedVolatility')) * 100,
+        open_interest=int(nf(row.get('openInterest'))),
+        contract_size=100.0,
+        contract_multiplier=100.0,
+    )
+
+
 def _fetch_live_watchlist(moomoo) -> list[str]:
     """Pull US stock tickers from moomoo 'Options' watchlist group. Fallback to default."""
     import re
@@ -82,15 +172,16 @@ def _fetch_live_watchlist(moomoo) -> list[str]:
     return _DEFAULT_WATCHLIST
 
 
-def _fetch_live_portfolio() -> tuple[dict[str, float], float, float, float]:
-    """Pull live portfolio positions, cash, buying power, fund_assets. Fallback to defaults."""
+def _fetch_live_portfolio() -> tuple[dict[str, float], float, float, float, set[str]]:
+    """Pull live portfolio positions, cash, buying power, fund_assets. Fallback to defaults.
+    Returns (stock_holdings, cash, buying_power, fund, existing_option_tickers)."""
     fund_usd = 0.0
     try:
         trd = OpenSecTradeContext(host='127.0.0.1', port=11111, ai_type=1)
         ret, acc_list = trd.get_acc_list()
         if ret != RET_OK:
             trd.close()
-            return {}, 817.0, 48638.89, 48500.0
+            return {}, 817.0, 48638.89, 48500.0, set()
 
         for _, acc in acc_list.iterrows():
             # trd_env is returned as string 'REAL' or 'SIMULATE'
@@ -116,21 +207,29 @@ def _fetch_live_portfolio() -> tuple[dict[str, float], float, float, float]:
             # Positions
             ret3, pos = trd.position_list_query(trd_env=trd_env, acc_id=acc_id, refresh_cache=True)
             holdings = {}
+            option_tickers: set[str] = set()
             if ret3 == RET_OK and pos is not None and len(pos) > 0:
                 import re
                 for _, p in pos.iterrows():
                     code = p['code']
-                    if (code.startswith('US.') and not re.search(r'\d{6}[CP]\d+', code)
-                            and '..' not in code):
+                    qty = p['qty']
+                    if qty == 0:
+                        continue
+                    if re.search(r'\d{6}[CP]\d+', code):
+                        # Option position — extract underlying ticker
+                        parts = re.match(r'US\.(\w+?)\d{6}[CP]\d+', code)
+                        if parts:
+                            option_tickers.add(parts.group(1))
+                    elif code.startswith('US.') and '..' not in code:
                         short = code.replace('US.', '')
-                        holdings[short] = p['qty']
+                        holdings[short] = qty
             trd.close()
             trd.close()
-            return holdings, usd_cash, usd_bp, fund_usd
+            return holdings, usd_cash, usd_bp, fund_usd, option_tickers
         trd.close()
     except Exception:
         pass
-    return {}, 817.0, 48638.89, 48500.0
+    return {}, 817.0, 48638.89, 48500.0, set()
 
 
 @dataclass
@@ -165,7 +264,7 @@ def main():
     candidates: list[TradeCandidate] = []
 
     # ── FETCH PORTFOLIO FIRST (separate connection, close before MoomooClient) ──
-    PORTFOLIO, CASH, BUYING_POWER, FUND = _fetch_live_portfolio()
+    PORTFOLIO, CASH, BUYING_POWER, FUND, EXISTING_OPTIONS = _fetch_live_portfolio()
 
     with MoomooClient() as moomoo:
         yf_client = YFinanceClient() if not args.no_external else None
@@ -173,7 +272,11 @@ def main():
         # ── LIVE WATCHLIST ──
         print("📋 Loading watchlist + portfolio...", end=' ')
         WATCHLIST = _fetch_live_watchlist(moomoo)
+        skipped = [t for t in WATCHLIST if t.replace('US.', '') in EXISTING_OPTIONS]
+        active = [t for t in WATCHLIST if t.replace('US.', '') not in EXISTING_OPTIONS]
         print(f"{len(WATCHLIST)} tickers, {len(PORTFOLIO)} positions, ${CASH + FUND:,.0f} liquid")
+        if skipped:
+            print(f"   ⏭️  Skipping {len(skipped)} with existing options: {', '.join(t.replace('US.', '') for t in skipped)}")
         print()
 
         # ── MACRO CONTEXT ──
@@ -188,8 +291,8 @@ def main():
             print(f"🌍 VIX {vix:.1f} | {regime} | Size: {regime_mult:.0%}"
                   + (f" | 10Y {macro.treasury_10y:.1f}%" if macro.treasury_10y else ""))
 
-        # ── SCAN EACH TICKER ──
-        for ticker in WATCHLIST:
+        # ── SCAN EACH TICKER (skip those with existing option positions) ──
+        for ticker in active:
             short = ticker.replace('US.', '')
 
             # Stock snapshot + technicals
@@ -239,12 +342,13 @@ def main():
                 iv_rank=iv_rank,
             )
 
-            # ── OPTION CHAIN ──
-            contracts = moomoo.get_option_snapshots(ticker, dte_min=7, dte_max=90)
+            # ── OPTION CHAIN (with retry + yfinance fallback) ──
+            contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=7, dte_max=90)
             if not contracts:
                 continue
+            time.sleep(1.5)  # rate limit: pause between tickers
 
-            has_shares = short in PORTFOLIO and PORTFOLIO[short] > 0
+            has_shares = short in PORTFOLIO and PORTFOLIO[short] >= 100
 
             # ── GEX GATE: negative GEX = dealer amplifying → pause CSP ──
             # Computed from chain: total gamma × OI × price
