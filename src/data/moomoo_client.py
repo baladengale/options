@@ -38,12 +38,16 @@ from src.data.models import StockSnapshot, OptionSnapshot
 class MoomooClient:
     """Thin wrapper over moomoo OpenQuoteContext. Returns typed dataclasses."""
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 11111, rate_limit: float = 0.35):
+    def __init__(self, host: str = '127.0.0.1', port: int = 11111, rate_limit: float = 0.2):
         self._ctx: Optional[OpenQuoteContext] = None
         self._host = host
         self._port = port
         self._rate_limit = rate_limit  # seconds between API calls to avoid moomoo throttling
         self._last_call = 0.0
+        # Cache: daily OHLCV data only changes once per day
+        self._history_cache: dict[tuple[str, int], list[dict]] = {}
+        # Cache: option chain codes per (ticker, dte_min, dte_max) per session
+        self._chain_cache: dict[tuple[str, int, int], list[str]] = {}
 
     @property
     def ctx(self) -> OpenQuoteContext:
@@ -63,6 +67,8 @@ class MoomooClient:
         if self._ctx is not None:
             self._ctx.close()
             self._ctx = None
+        self._history_cache.clear()
+        self._chain_cache.clear()
 
     def __enter__(self):
         return self
@@ -155,7 +161,12 @@ class MoomooClient:
         self, ticker: str, dte_min: int = 30, dte_max: int = 45
     ) -> list[str]:
         """Get option codes for a ticker within DTE range. Chunks 30-day API limit.
+        Cached per session — option chain listings don't change intraday.
         Includes rate limiting and retry to avoid moomoo throttling (ret=-1)."""
+        cache_key = (ticker, dte_min, dte_max)
+        if cache_key in self._chain_cache:
+            return self._chain_cache[cache_key]
+
         today = date.today()
         from datetime import timedelta
         codes = []
@@ -168,16 +179,18 @@ class MoomooClient:
             start = (today + timedelta(days=chunk_start)).isoformat()
             end = (today + timedelta(days=chunk_end)).isoformat()
 
-            # Rate limit: sleep before each get_option_chain call
+            # Rate limit: throttle before each get_option_chain call
             self._throttle()
 
             # Retry up to 2 times on rate-limit failure (ret=-1)
             for attempt in range(3):
+                if attempt > 0:
+                    self._throttle()  # re-throttle before retry
                 ret, data = self.ctx.get_option_chain(ticker, start=start, end=end)
                 if ret == RET_OK:
                     break
                 if attempt < 2:
-                    time.sleep(1.0 * (attempt + 1))  # backoff: 1s, 2s
+                    time.sleep(0.5 * (attempt + 1))  # backoff: 0.5s, 1s
 
             if ret == RET_OK and data is not None and len(data) > 0:
                 for code in data['code']:
@@ -186,6 +199,7 @@ class MoomooClient:
                         seen.add(code)
             chunk_start = chunk_end + 1
 
+        self._chain_cache[cache_key] = codes
         return codes
 
     def get_option_snapshots(
@@ -343,13 +357,19 @@ class MoomooClient:
         self, ticker: str, days: int = 252
     ) -> list[dict]:
         """Get daily OHLCV history. Returns list of dicts with keys:
-        date, open, high, low, close, volume."""
+        date, open, high, low, close, volume.
+        Cached per session — daily data only changes once per day."""
+        cache_key = (ticker, days)
+        if cache_key in self._history_cache:
+            return self._history_cache[cache_key]
+
         from moomoo import KLType, AuType
         self._throttle()
         ret, data, _ = self.ctx.request_history_kline(
             ticker, max_count=days, ktype=KLType.K_DAY, autype=AuType.QFQ
         )
         if ret != RET_OK or data is None or len(data) == 0:
+            self._history_cache[cache_key] = []
             return []
 
         records = []
@@ -362,6 +382,7 @@ class MoomooClient:
                 'close': float(row.get('close', 0) or 0),
                 'volume': int(row.get('volume', 0) or 0),
             })
+        self._history_cache[cache_key] = records
         return records
 
     # ═══════════════════════════════════════════════════════════

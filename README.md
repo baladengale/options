@@ -26,9 +26,19 @@ python3 scripts/screener.py --top 5
 # 5. Adhoc research
 python3 scripts/market_data.py NVDA --options
 python3 scripts/market_sentiment.py
+
+# 6. Paper trading engine (validate strategy before live execution)
+python3 scripts/oie_engine.py init          # Once: seed paper portfolio
+python3 scripts/oie_engine.py once          # Run one cycle, see what it does
+python3 scripts/oie_engine.py status        # Check paper portfolio anytime
+python3 scripts/oie_engine.py run           # Continuous mode (30-min cycles)
 ```
 
 **Prerequisites**: OpenD running on `127.0.0.1:11111`. Install: `pip3 install moomoo-api yfinance pandas`.
+
+**Two databases, zero confusion:**
+- `db/options.db` — your **real** portfolio mirror (synced from moomoo)
+- `db/oie_paper.db` — your **paper** trading portfolio (simulated by the engine)
 
 ---
 
@@ -58,18 +68,22 @@ Moomoo REAL account (read-only poll)
 ```
 options/
 ├── db/
-│   └── options.db                     # Single SQLite — 9 tables, one source of truth
+│   ├── options.db                     # REAL portfolio mirror (9 tables)
+│   └── oie_paper.db                   # Paper trading portfolio (4 tables, separate)
+├── config/
+│   └── rules.yaml                     # Master config: all parameters, thresholds, limits
 ├── src/
 │   ├── data/
 │   │   ├── models.py                  # Dataclasses: StockSnapshot, OptionSnapshot
 │   │   ├── moomoo_client.py           # Moomoo OpenD data client (quotes + chains)
 │   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro
 │   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, Greeks, GEX)
-│   │   ├── iv_history.py              # IV rank persistence in options.db
+│   │   ├── iv_history.py              # IV rank persistence
 │   │   ├── trade_log.py               # TradeLog + DailyRunDB
 │   │   ├── portfolio_db.py            # PortfolioDB (funds, positions, local trades)
 │   │   ├── portfolio_sync.py          # PortfolioSync (poll REAL account, sync orders)
-│   │   └── guardrails.py              # Portfolio size/risk limits
+│   │   ├── oie_db.py                  # OIE paper portfolio DB (separate from real)
+│   │   └── guardrails.py              # Portfolio size/risk limits (shared)
 │   ├── analysis/
 │   │   ├── sentiment.py               # Shared: macro context + ticker sentiment
 │   │   ├── trend.py                   # Trend/momentum indicators
@@ -78,16 +92,23 @@ options/
 │   ├── scoring/                       # WHEEL_SCORE engine (deterministic)
 │   ├── signals/                       # Signal generator + sentiment scoring
 │   ├── risk/                          # Collar check, position monitor
-│   └── trade/                         # Validator, position sizer
+│   └── config.py                      # Typed config loader from rules.yaml
 ├── scripts/
 │   ├── portfolio.py                   # Portfolio: sync / status / summary / history
 │   ├── daily_run.py                   # Daily pipeline: sync + screen + check + log
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
 │   ├── portfolio_check.py             # Position health: score all holdings
+│   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
 │   └── market_sentiment.py            # Adhoc: macro + analyst + earnings + news
+├── tests/
+│   ├── test_oie_db.py                 # OIE paper DB tests (27 tests)
+│   ├── test_screener_scoring.py       # Screener scoring tests (28 tests)
+│   ├── test_scoring.py                # WHEEL_SCORE tests
+│   ├── test_constraints.py            # Constraint gate tests
+│   ├── test_trend.py                  # Trend/momentum formula tests
+│   └── ...                            # Full test suite (328 tests)
 ├── specs/                             # Research + architecture docs
-├── tests/                             # Test suite
 ├── CLAUDE.md                          # AI coding instructions
 └── GOAL.md                            # Investment goals
 ```
@@ -369,6 +390,347 @@ python3 scripts/market_sentiment.py --watchlist     # All watchlist tickers
 
 ---
 
+### `oie_engine.py` — Options Income Engine (Paper Trading)
+
+Autonomous paper trading engine. Runs the screener, applies decisions to a local simulated portfolio, and tracks P&L over time. **Completely separate from your REAL moomoo account** — it never touches real money. Designed to validate the strategy before live execution.
+
+```bash
+python3 scripts/oie_engine.py init         # Seed paper portfolio from REAL account
+python3 scripts/oie_engine.py run          # Continuous loop (default: every 30 min)
+python3 scripts/oie_engine.py once         # Run a single cycle
+python3 scripts/oie_engine.py status       # Show paper portfolio + open positions
+python3 scripts/oie_engine.py history      # Show P&L snapshots over time
+python3 scripts/oie_engine.py reset        # Wipe paper portfolio
+```
+
+**Options:**
+
+| Command | Needs OpenD? | Description |
+|---------|:---:|-------------|
+| `init` | ✅ | Copies REAL stock holdings + cash into paper portfolio. Does NOT copy existing options — paper starts fresh with only stocks + cash |
+| `run` | ✅ | Continuous loop. Runs a full cycle every N minutes. Ctrl+C to stop gracefully |
+| `run --interval N` | ✅ | Set cycle interval in minutes (default: 30) |
+| `run --skip-closed` | ✅ | Skip cycles when US market is closed (default: ON for `run`) |
+| `run --force` | ✅ | Run even if market is closed |
+| `once` | ✅ | Single cycle: marks positions to market, checks exits, screens new trades, executes paper trades, takes snapshot |
+| `once --dry-run` | ✅ | Screen + guardrails WITHOUT modifying DB. Shows what WOULD happen |
+| `once --skip-closed` | ✅ | Skip if market is closed |
+| `once --force` | ✅ | Run even if market is closed |
+| `test` | ❌ | Self-check: validates DB schema, config, scoring imports, guardrails (no OpenD) |
+| `status` | ❌ | Reads paper DB. Shows stocks, options, P&L, cash buffer, recent events |
+| `history` | ❌ | Shows portfolio value snapshots over time |
+| `reset --force` | ❌ | Wipes all paper data for a fresh start |
+
+#### How It Works
+
+Each cycle runs **8 phases** in order:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  PHASE 1: Load State                                     │
+│  Reads paper cash, positions, cycle count from DB        │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 2: Mark-to-Market (moomoo live prices)            │
+│  Batch stock snapshots + option snapshots → update DB    │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 3: Check Exits                                    │
+│  For each ACTIVE option:                                 │
+│    profit_captured ≥ 70% → CLOSE immediately             │
+│    profit_captured ≥ 50% → CLOSE (TastyTrade exit)       │
+│    DTE ≤ 0 → EXPIRE or ASSIGN (based on ITM/OTM)        │
+│    DTE ≤ 3 → flag warning                                │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 4: Screen New Opportunities                       │
+│  Reuses screener.py scoring engine:                      │
+│    → Batch snapshots for all watchlist tickers            │
+│    → Fetch option chains (optimal DTE first, then expand)│
+│    → _compute_ticker_score + _contract_penalty            │
+│    → Filter: delta, OI, volume, RoC, IV, VRP gate        │
+│    → Rank by score, dedup to 1 per ticker per strategy    │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 5: Apply Guardrails                               │
+│  Same GuardrailChecker as live portfolio:                 │
+│    → Max 15% per ticker (concentration)                   │
+│    → Cash buffer ≥ 25%                                   │
+│    → Max 8 open positions                                 │
+│    → Max 2 new trades per day                             │
+│    → CSP capital ≤ 80% of cash                            │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 6: Execute Paper Trades                           │
+│  Top 1-2 candidates that pass all gates:                  │
+│    → Open position in paper DB                            │
+│    → Update cash balance (add premium)                    │
+│    → Log OPEN_CSP or OPEN_CC event                        │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 7: Snapshot                                       │
+│  Records net liquidation value:                           │
+│    cash + stock_MV + option_premium − option_liability    │
+├─────────────────────────────────────────────────────────┤
+│  PHASE 8: Log + Sleep                                    │
+│  Increments cycle count, logs completion, sleeps          │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Paper Position Lifecycle
+
+Every option position in the paper portfolio follows this state machine:
+
+```
+                    ┌─────────┐
+                    │  ACTIVE  │ ← opened by engine (OPEN_CSP / OPEN_CC)
+                    └────┬────┘
+           ┌─────────────┼─────────────┐
+           ▼             ▼             ▼
+     ┌─────────┐   ┌──────────┐  ┌──────────┐
+     │ CLOSED  │   │ EXPIRED  │  │ ASSIGNED │
+     │(bought  │   │  (OTM at │  │(ITM at   │
+     │ back at  │   │ expiry)  │  │ expiry)  │
+     │ profit)  │   │          │  │          │
+     └─────────┘   └──────────┘  └────┬─────┘
+           │              │           │
+           ▼              ▼           ▼
+      P&L = (entry    P&L = full   CSP → add 100 shares
+      − exit) ×       premium      at strike price
+      contracts       kept          CC → remove 100
+      × 100                         shares at strike
+```
+
+**Exit triggers (checked every cycle):**
+
+| Trigger | Action | P&L Calculation |
+|---------|--------|-----------------|
+| Profit ≥ 70% | Close immediately | `(entry_premium − current_bid) × contracts × 100` |
+| Profit ≥ 50% | Close | Same — TastyTrade backtested optimal exit |
+| DTE ≤ 0 + OTM | Expire | Full premium kept: `entry_premium × contracts × 100` |
+| DTE ≤ 0 + ITM (CSP) | Assign | Stock added at `strike − premium` effective cost |
+| DTE ≤ 0 + ITM (CC) | Assign | Stock removed at strike, P&L = `(strike − cost_basis + premium) × 100` |
+
+#### Paper Portfolio Database
+
+The OIE uses its own SQLite DB at `db/oie_paper.db` — completely separate from `db/options.db`.
+
+| Table | Purpose |
+|-------|---------|
+| `paper_state` | Key-value store: cash balance, fund value, cycle count, last run time |
+| `paper_positions` | Stock + option positions with full lifecycle tracking (status, entry/exit, P&L, Greeks) |
+| `paper_trades` | Audit trail: every action logged with timestamp, event type, ticker, cash impact |
+| `paper_snapshots` | Time-series portfolio value: one row per cycle for P&L charting |
+
+**Query paper data directly:**
+```bash
+# See all paper positions
+sqlite3 db/oie_paper.db "SELECT ticker, pos_type, status, entry_premium, realized_pnl FROM paper_positions"
+
+# See recent audit events  
+sqlite3 db/oie_paper.db "SELECT ts, event, ticker, detail FROM paper_trades ORDER BY id DESC LIMIT 20"
+
+# See P&L over time
+sqlite3 db/oie_paper.db "SELECT ts, total_value, cash, unrealized_pnl, realized_pnl_total FROM paper_snapshots"
+```
+
+#### Scheduling
+
+**Cron (every 30 minutes during market hours):**
+```bash
+*/30 9-16 * * 1-5 cd ~/options && python3 scripts/oie_engine.py once >> logs/oie.log 2>&1
+```
+
+**Continuous mode (Hermes agent or tmux session):**
+```bash
+python3 scripts/oie_engine.py run --interval 30
+```
+
+**Manual ad-hoc:**
+```bash
+python3 scripts/oie_engine.py once   # Run one cycle, see what happened
+python3 scripts/oie_engine.py status # Check paper portfolio anytime
+```
+
+#### Managing the Paper Engine
+
+**Starting fresh:**
+```bash
+python3 scripts/oie_engine.py reset --force   # Wipe everything
+python3 scripts/oie_engine.py init            # Seed from current REAL portfolio
+python3 scripts/oie_engine.py run --interval 30  # Start running
+```
+
+**Checking progress:**
+```bash
+python3 scripts/oie_engine.py status   # Current paper positions + P&L
+python3 scripts/oie_engine.py history  # Value over time
+```
+
+**Comparing paper vs real:**
+```bash
+python3 scripts/portfolio_check.py     # Real portfolio health
+python3 scripts/oie_engine.py status   # Paper portfolio health
+# Compare: which made better decisions? Did paper catch exits that real missed?
+```
+
+**Stopping gracefully:**
+```bash
+# If running in continuous mode: Ctrl+C
+# Engine finishes current cycle before stopping
+# All state persisted — restart picks up where it left off
+```
+
+**Resuming after restart:**
+```bash
+python3 scripts/oie_engine.py run      # Reads last state from DB, continues
+```
+
+#### Performance
+
+With optimizations (batch snapshots, cached price history, cached option chains, tiered DTE screening):
+- **~107 seconds per cycle** for 19 watchlist tickers
+- **~6% duty cycle** at 30-minute interval
+- **~75 API calls** per cycle (down from ~200 originally)
+- All caches cleared on engine restart — fresh data each session
+
+#### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Separate DB (`oie_paper.db`) | Never pollutes real portfolio data. Easy to wipe and restart |
+| Paper cash = us_cash + fund | Real account has margin (negative cash) offset by money market fund. Paper combines them into one positive pool |
+| Options NOT copied at seed | Paper starts fresh — engine makes its own decisions from scratch |
+| Same scoring as screener | Imports `_compute_ticker_score`, `_contract_penalty` directly from `scripts/screener.py`. Same math, same thresholds |
+| Same guardrails as live | `GuardrailChecker` pointed at paper portfolio. Same 15% concentration, 25% cash buffer limits |
+| Max 2 new trades per cycle | Prevents overtrading. Configurable via `config/rules.yaml` |
+| No yfinance fallback for options | Option chains come from moomoo only. yfinance is for sentiment/macro only |
+
+#### Validating the Engine (Step-by-Step)
+
+Run these commands in order. Each builds on the previous.
+
+```bash
+# STEP 1: Self-test (no OpenD needed — works anytime)
+python3 scripts/oie_engine.py test
+# Expected: "✅ ALL CHECKS PASSED"
+
+# STEP 2: Seed the paper portfolio
+python3 scripts/oie_engine.py reset --force
+python3 scripts/oie_engine.py init
+# Expected: 14 stocks seeded with actual cost basis + cash pool
+
+# STEP 3: Check status (no OpenD needed)
+python3 scripts/oie_engine.py status
+# Expected: 14 stocks, 0 options, Net Liq Value ~$232K
+
+# STEP 4: Dry-run — see what the engine WOULD do (doesn't modify DB)
+python3 scripts/oie_engine.py once --dry-run --force
+# Expected: Shows candidates found, guardrail checks, trades it would open
+#            Says "DRY RUN — no changes will be written to DB"
+#            Position count stays at 14
+
+# STEP 5: Run a real cycle (requires OpenD + market hours or --force)
+python3 scripts/oie_engine.py once --force
+# Expected: Opens 1-2 CSP trades, shows premium collected
+
+# STEP 6: Verify trades were recorded
+python3 scripts/oie_engine.py status
+# Expected: 16 positions (14 stocks + 2 options)
+
+# STEP 7: Check history
+python3 scripts/oie_engine.py history
+# Expected: Shows snapshot(s) with total value, cash, P&L
+
+# STEP 8: Verify data directly
+sqlite3 db/oie_paper.db "SELECT ticker, pos_type, status, entry_premium FROM paper_positions WHERE pos_type != 'STOCK'"
+# Expected: Shows your paper option positions
+
+# STEP 9: Run second cycle — verify no duplicates
+python3 scripts/oie_engine.py once --force
+# Expected: "New trades: 0" (existing options block duplicates)
+
+# STEP 10: Compare paper vs real
+python3 scripts/portfolio_check.py --no-external   # Real portfolio
+python3 scripts/oie_engine.py status               # Paper portfolio
+# Compare: Did paper catch exits real missed? Different candidates?
+```
+
+#### Cron Setup (Automatic)
+
+Set up these cron entries to run the engine automatically during US market hours.
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add these lines:
+
+# OIE paper engine — every 30 min during market hours (Mon-Fri)
+# Times are in YOUR LOCAL timezone. Adjust if not US Eastern.
+# The --skip-closed flag checks market hours and skips if closed
+*/30 9-16 * * 1-5 cd ~/options && python3 scripts/oie_engine.py once --skip-closed >> logs/oie.log 2>&1
+
+# Portfolio sync — once after market close
+30 16 * * 1-5 cd ~/options && python3 scripts/portfolio.py sync >> logs/portfolio.log 2>&1
+
+# Full daily run — after sync
+0 17 * * 1-5 cd ~/options && python3 scripts/daily_run.py --top 10 >> logs/daily.log 2>&1
+```
+
+**How `--skip-closed` works:**
+- Checks current day (Mon-Fri) and time against US market hours (9:30 AM - 4:00 PM ET)
+- Automatically detects EDT (summer, UTC-4) vs EST (winter, UTC-5)
+- On weekends: prints "Market closed — Saturday/Sunday" and exits
+- Outside hours: prints "Market closed — pre-open/after hours" and exits
+- With `--force`: skips the check and runs anyway (for testing)
+
+**Alternative: Continuous mode (tmux/screen session):**
+```bash
+# Start a persistent session
+tmux new -s oie
+python3 scripts/oie_engine.py run --interval 30 --skip-closed
+
+# Detach: Ctrl+B, D
+# Reattach: tmux attach -t oie
+# Stop: Ctrl+C (graceful — finishes current cycle first)
+```
+
+#### GenAI / Hermes — Do You Need It?
+
+**No.** The OIE engine is fully deterministic. All decisions are formula-driven:
+
+| What | How |
+|------|-----|
+| Ticker scoring | 5-dimension weighted formula (`_compute_ticker_score`) |
+| Contract selection | Delta, OI, volume, RoC, IV, VRP thresholds |
+| Exit decisions | Profit % captured, DTE countdown |
+| Guardrails | Position sizing, concentration, cash buffer (all arithmetic) |
+| Market regime | VIX + yield curve + credit + DXY + VVIX voting |
+
+**Where GenAI COULD add value (optional, not required):**
+
+| Use Case | How |
+|----------|-----|
+| **Daily paper P&L summary** | Feed `oie_engine.py history` output to Claude/Hermes for a natural-language summary of what the paper engine did |
+| **Paper vs real diff** | Compare paper and real portfolio outputs, ask AI to explain why they diverged |
+| **Earnings/event context** | Before a major earnings or FOMC, ask AI whether the engine should pause CSPs |
+| **Weekly strategy review** | Feed a week of paper snapshots to AI for pattern analysis: "Did the 50% exit rule work? Should we adjust DTE range?" |
+
+**When NOT to use GenAI:** Never let AI compute scores, check constraints, or generate trade signals. Those must stay deterministic — the AI boundary is narrative only.
+
+#### Testing Without Affecting Data
+
+```bash
+# Dry-run: sees what the engine would do, writes NOTHING to DB
+python3 scripts/oie_engine.py once --dry-run --force
+
+# Use this to:
+#   - Test new config changes (edit config/rules.yaml, then dry-run)
+#   - See if a new ticker would be picked up
+#   - Debug scoring: why is/isn't a ticker getting trades?
+#   - Check guardrails: what's blocking a candidate?
+
+# After dry-run, your DB is unchanged — verify:
+python3 scripts/oie_engine.py status  # Same positions as before
+```
+
+---
+
 ## Scoring Guide — 1-10 Scale
 
 Both `screener.py` and `portfolio_check.py` use the same 1-10 scale. **Lower is better.** 1 = act now, 10 = emergency.
@@ -478,41 +840,55 @@ Polls REAL moomoo account (`accinfo_query`, `position_list_query`, `order_list_q
 ## Data Flow
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    DATA LAYER                         │
-│                                                       │
-│  portfolio.py sync (cron or on-demand)                │
-│    ├── moomoo REAL account ← accinfo_query            │
-│    ├── moomoo REAL account ← position_list_query      │
-│    └── moomoo REAL account ← order_list_query         │
-│              │                                        │
-│              ▼                                        │
-│  db/options.db (9 tables, SQLite)                     │
-└──────────────────────┬──────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      DATA LAYER                               │
+│                                                                │
+│  portfolio.py sync (cron or on-demand)                         │
+│    ├── moomoo REAL account ← accinfo_query                     │
+│    ├── moomoo REAL account ← position_list_query               │
+│    └── moomoo REAL account ← order_list_query                  │
+│              │                                                 │
+│              ▼                                                 │
+│  db/options.db (REAL portfolio mirror, 9 tables)               │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────┴──────────────────────────────┐
-│                  ANALYSIS LAYER                       │
-│                                                       │
-│  daily_run.py (orchestrator)                          │
-│    ├── src/analysis/sentiment.py (macro + sentiment)  │
-│    ├── screener.py (watchlist → CC/CSP candidates)    │
-│    ├── portfolio_check.py (positions → decisions)     │
-│    ├── src/scoring/ (WHEEL_SCORE)                     │
-│    └── src/risk/ (collar check, position monitor)     │
-│              │                                        │
-│              ▼                                        │
-│  Console output + DB tables (run_signals,             │
-│  run_positions, trade_log)                            │
-└──────────────────────┬──────────────────────────────┘
+┌──────────────────────┴───────────────────────────────────────┐
+│                    ANALYSIS LAYER                              │
+│                                                                │
+│  daily_run.py (orchestrator)                                   │
+│    ├── src/analysis/sentiment.py (macro + sentiment)           │
+│    ├── screener.py (watchlist → CC/CSP candidates)             │
+│    ├── portfolio_check.py (positions → decisions)              │
+│    ├── src/scoring/ (WHEEL_SCORE)                              │
+│    └── src/risk/ (collar check, position monitor)              │
+│              │                                                 │
+│              ▼                                                 │
+│  Console output + DB tables (run_signals, trade_log)           │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────┴──────────────────────────────┐
-│                 EXECUTION LAYER                       │
-│                                                       │
-│  👤 MANUAL — user reviews suggestions,                │
-│     submits orders in moomoo desktop app               │
-│                                                       │
-│  portfolio.py sync picks up fills next run             │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────┴───────────────────────────────────────┐
+│                PAPER TRADING LAYER (OIE)                       │
+│                                                                │
+│  oie_engine.py (autonomous paper engine)                       │
+│    ├── Seed: copies REAL stocks + cash → db/oie_paper.db       │
+│    ├── Cycle: mark-to-market, check exits, screen → execute    │
+│    ├── Reuses: screener scoring + guardrails + moomoo client   │
+│    └── Logs: every action to paper_trades audit trail          │
+│              │                                                 │
+│              ▼                                                 │
+│  db/oie_paper.db (paper portfolio, 4 tables, SEPARATE)         │
+└──────────────────────┬───────────────────────────────────────┘
+                       │
+┌──────────────────────┴───────────────────────────────────────┐
+│                   EXECUTION LAYER                              │
+│                                                                │
+│  👤 MANUAL — user reviews suggestions from BOTH:               │
+│     • screener.py / portfolio_check.py (real portfolio)        │
+│     • oie_engine.py status (paper portfolio decisions)         │
+│     Submits orders in moomoo desktop app                        │
+│                                                                │
+│  portfolio.py sync picks up fills next run                     │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---

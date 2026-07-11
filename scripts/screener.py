@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), '..'
 
 from moomoo import OpenSecTradeContext, TrdEnv, RET_OK
 
+from src.logging_setup import get_logger
+log = get_logger('screener')
+
 from src.data.moomoo_client import MoomooClient
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
@@ -73,90 +76,17 @@ def _cfg_val(getter, default=None):
 
 def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max: int = 90) -> list:
     """
-    Fetch option chain with retry + yfinance fallback.
-    Moomoo OpenD rate-limits after multiple large chain requests.
-    Retry once, then fall back to yfinance if moomoo returns empty.
+    Fetch option chain with minimal retry on rate limits.
+    Single get_option_snapshots call with one 1s retry if empty.
+    No yfinance fallback — moomoo is the source of truth.
     """
-    # Try moomoo with retry
     for attempt in range(2):
         if attempt > 0:
-            time.sleep(3)
+            time.sleep(1)
         contracts = moomoo.get_option_snapshots(ticker, dte_min=dte_min, dte_max=dte_max)
         if contracts:
             return contracts
-
-    # Fallback: yfinance
-    try:
-        import yfinance as yf
-        yf_ticker = ticker.replace('US.', '')
-        stock = yf.Ticker(yf_ticker)
-
-        expiries = stock.options
-        if not expiries:
-            return []
-
-        today = date.today()
-        from datetime import timedelta
-        min_date = today + timedelta(days=dte_min)
-        max_date = today + timedelta(days=dte_max)
-
-        contracts = []
-        for exp_str in expiries:
-            try:
-                exp_date = date.fromisoformat(exp_str)
-            except Exception:
-                continue
-            if not (min_date <= exp_date <= max_date):
-                continue
-
-            chain = stock.option_chain(exp_str)
-            dte_val = (exp_date - today).days
-
-            for _, row in chain.calls.iterrows():
-                contracts.append(_yf_to_option_snapshot(
-                    ticker, 'CALL', row, exp_str, dte_val))
-            for _, row in chain.puts.iterrows():
-                contracts.append(_yf_to_option_snapshot(
-                    ticker, 'PUT', row, exp_str, dte_val))
-            time.sleep(0.3)  # yfinance rate limit
-
-        return contracts
-    except Exception:
-        return []
-
-
-def _yf_to_option_snapshot(ticker: str, opt_type: str, row, expiry: str, dte: int):
-    """Convert yfinance option row to OptionSnapshot-compatible object."""
-    from src.data.models import OptionSnapshot
-
-    def nf(v, d=0.0):
-        try: return float(v) if v is not None else d
-        except: return d
-
-    strike = nf(row.get('strike'))
-    return OptionSnapshot(
-        code=f'{ticker}{expiry.replace("-","")[2:]}{"C" if opt_type=="CALL" else "P"}{int(strike*1000):08d}',
-        name='',
-        underlying=ticker,
-        option_type=opt_type,
-        strike=strike,
-        expiry=expiry,
-        dte=dte,
-        area_type='AMERICAN',
-        last_price=nf(row.get('lastPrice')),
-        bid=nf(row.get('bid')),
-        ask=nf(row.get('ask')),
-        volume=int(nf(row.get('volume'))),
-        delta=nf(row.get('delta')),
-        gamma=nf(row.get('gamma')),
-        theta=nf(row.get('theta')),
-        vega=nf(row.get('vega')),
-        rho=nf(row.get('rho')),
-        implied_vol=nf(row.get('impliedVolatility')) * 100,
-        open_interest=int(nf(row.get('openInterest'))),
-        contract_size=100.0,
-        contract_multiplier=100.0,
-    )
+    return []
 
 
 def _fetch_live_watchlist(moomoo) -> list[str]:
@@ -266,6 +196,8 @@ def main():
     parser.add_argument('--top', type=int, default=10, help='Show top N results')
     parser.add_argument('--no-external', action='store_true', help='Skip yfinance (offline)')
     parser.add_argument('--log', action='store_true', help='Log top picks to trade log')
+    parser.add_argument('--force', action='store_true',
+                        help='Skip guardrails + market hours checks — show all candidates')
     args = parser.parse_args()
 
     candidates: list[TradeCandidate] = []
@@ -279,36 +211,50 @@ def main():
         # ── LIVE WATCHLIST ──
         print("📋 Loading watchlist + portfolio...", end=' ')
         WATCHLIST = _fetch_live_watchlist(moomoo)
-        skipped = [t for t in WATCHLIST if t.replace('US.', '') in EXISTING_OPTIONS]
-        active = [t for t in WATCHLIST if t.replace('US.', '') not in EXISTING_OPTIONS]
         print(f"{len(WATCHLIST)} tickers, {len(PORTFOLIO)} positions, ${CASH + FUND:,.0f} liquid")
-        if skipped:
-            print(f"   ⏭️  Skipping {len(skipped)} with existing options: {', '.join(t.replace('US.', '') for t in skipped)}")
         print()
 
         # ── MACRO CONTEXT ──
-        vix = 20.0
+        vix = None
         regime = 'NEUTRAL'
         regime_mult = 1.0
         if yf_client:
-            macro = get_macro_context(yf_client)
-            vix = macro.vix or 20.0
-            regime = macro.market_regime
-            regime_mult = macro.position_mult
-            print(f"🌍 VIX {vix:.1f} | {regime} | Size: {regime_mult:.0%}"
-                  + (f" | 10Y {macro.treasury_10y:.1f}%" if macro.treasury_10y else ""))
+            try:
+                macro = get_macro_context(yf_client)
+                vix = macro.vix
+                regime = macro.market_regime
+                regime_mult = macro.position_mult
+            except Exception:
+                pass
+        if vix is None:
+            vix = 20.0  # fallback when yfinance unavailable
+        print(f"🌍 VIX {vix:.1f} | {regime} | Size: {regime_mult:.0%}"
+              + (f" | 10Y {macro.treasury_10y:.1f}%" if yf_client and macro and macro.treasury_10y else ""))
 
-        # ── SCAN EACH TICKER (skip those with existing option positions) ──
-        for ticker in active:
+        log.info(f"SCAN START: {len(WATCHLIST)} tickers, regime={regime}, vix={vix}")
+        # ── SCAN EACH TICKER (dedup at end — don't skip entire ticker) ──
+        # OPTIMIZATION: Batch all stock snapshots upfront (1 API call vs N)
+        all_snaps = moomoo.get_stock_snapshots(WATCHLIST)
+        snap_map = {s.ticker: s for s in all_snaps}
+        spy_history = moomoo.get_price_history('US.SPY', 252)  # cached after first fetch
+
+        for ticker in WATCHLIST:
             short = ticker.replace('US.', '')
-
-            # Stock snapshot + technicals
-            snap = moomoo.get_stock_snapshot(ticker)
-            if snap is None:
+            if short in EXISTING_OPTIONS:
                 continue
+
+            # Stock snapshot (from batch)
+            snap = snap_map.get(ticker)
+            if snap is None or snap.last_price <= 0:
+                continue
+            # Pre-filter: skip illiquid tickers
+            log.debug(f"  {short}: price=${snap.last_price:.2f}, spread={snap.bid_ask_spread_pct or 0:.1f}%, rsi={snap.rsi_14 or 0:.0f}")
+            if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > 5.0:
+                log.debug(f"  {short}: SKIP — spread {snap.bid_ask_spread_pct:.1f}% > 5%")
+                continue
+
             history = moomoo.get_price_history(ticker, 252)
             if history:
-                spy_history = moomoo.get_price_history('US.SPY', 252)
                 enrich_stock_snapshot(snap, history, spy_history)
 
             # External sentiment — use shared module
@@ -353,9 +299,11 @@ def main():
             dte_min = _cfg_val(lambda c: c.dte_screen_min)
             dte_max = _cfg_val(lambda c: c.dte_screen_max)
             contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=dte_min, dte_max=dte_max)
+            log.debug(f"  {short}: {len(contracts)} option contracts fetched")
             if not contracts:
+                log.debug(f"  {short}: SKIP — no option contracts")
                 continue
-            time.sleep(1.5)  # rate limit: pause between tickers
+            time.sleep(0.25)  # light rate limit (throttle in moomoo_client handles the rest)
 
             has_shares = short in PORTFOLIO and PORTFOLIO[short] >= 100
 
@@ -394,24 +342,26 @@ def main():
                         continue
                     capital = c.strike * 100
 
-                    # ── CONCENTRATION GATE: ≤15% per name (pro standard) ──
-                    total_nlv = sum(PORTFOLIO.get(t, 0) * snap.last_price
-                                    for t, snap2 in [(short, snap)]
-                                    if snap2.last_price) + CASH + FUND
-                    if capital > total_nlv * _cfg_val(lambda c: c.max_single_position_pct):
-                        continue
+                    # ── CONCENTRATION GATE ──
+                    if not args.force:
+                        total_nlv = sum(PORTFOLIO.get(t, 0) * snap.last_price
+                                        for t, snap2 in [(short, snap)]
+                                        if snap2.last_price) + CASH + FUND
+                        if capital > total_nlv * _cfg_val(lambda c: c.max_single_position_pct):
+                            continue
 
-                    # ── CASH BUFFER GATE: include fund assets, block if < 10% ──
-                    liquid = CASH + FUND
-                    cash_pct = liquid / total_nlv if total_nlv > 0 else 0
-                    if cash_pct < 0.10:
-                        continue
+                        # ── CASH BUFFER GATE ──
+                        liquid = CASH + FUND
+                        cash_pct = liquid / total_nlv if total_nlv > 0 else 0
+                        if cash_pct < 0.10:
+                            continue
 
-                    if capital > BUYING_POWER * 0.8:
-                        continue
+                        if capital > BUYING_POWER * 0.8:
+                            continue
 
                     adj_roc = roc * regime_mult
                     contract_score = ticker_score + _contract_penalty(c, abs_d, adj_roc)
+                    log.debug(f"  {short} CSP candidate: ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={abs_d:.3f} RoC={roc:.1f}% score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
                         ticker=short, strategy='CSP', score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
@@ -441,6 +391,7 @@ def main():
                     if roc < _cfg_val(lambda c: c.roc_min_cc):
                         continue
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
+                    log.debug(f"  {short} CC candidate: ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={c.delta:.3f} RoC={roc:.1f}% score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
                         ticker=short, strategy='CC', score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
@@ -453,15 +404,16 @@ def main():
                     ))
 
     # ── RANK & OUTPUT ──
-    # Dedup: best contract per ticker per strategy (max 1 CSP + 1 CC per ticker)
+    # Dedup: one best per ticker (no strategy split). Skip tickers with existing options.
     seen = set()
     deduped = []
     candidates.sort(key=lambda x: x.score)
     for c in candidates:
-        key = (c.ticker, c.strategy)
-        if key not in seen:
+        if c.ticker in EXISTING_OPTIONS:
+            continue  # already have an option on this ticker
+        if c.ticker not in seen:
             deduped.append(c)
-            seen.add(key)
+            seen.add(c.ticker)
     top = deduped[:args.top]
 
     print(f"\n{'='*90}")
@@ -498,9 +450,9 @@ def main():
     # ── Log top picks for backtesting / paper tracking ──
     if args.log and candidates:
         from src.data.trade_log import TradeLog
-        with TradeLog() as log:
+        with TradeLog() as tlog:
             for c in candidates[:10]:
-                log.log_recommendation(
+                tlog.log_recommendation(
                     ticker=c.ticker, strategy=c.strategy,
                     strike=c.strike, expiry=c.expiry,
                     delta=c.delta, premium=c.bid,

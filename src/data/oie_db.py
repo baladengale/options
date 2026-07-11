@@ -273,7 +273,7 @@ class OIEDB:
         cost_basis = strike - entry  # effective cost basis per share
 
         if action == 'CC':
-            # Stock called away: sell 100 shares at strike
+            # Stock called away: sell 100 shares at strike. Remove from stock holdings.
             pnl = round((strike - pos['cost_price']) * qty * 100 + entry * qty * 100, 2)
             self._conn.execute("""
                 UPDATE paper_positions
@@ -281,6 +281,26 @@ class OIEDB:
                     exit_reason='CC_ASSIGN', realized_pnl=?
                 WHERE id=?
             """, (now, pnl, pos_id))
+            # Deduct shares from stock position (earliest ID first)
+            remaining = qty * 100
+            stock_rows = self._conn.execute(
+                "SELECT id, qty FROM paper_positions "
+                "WHERE ticker=? AND status='ACTIVE' AND pos_type='STOCK' ORDER BY id",
+                (pos['ticker'],)
+            ).fetchall()
+            for sr in stock_rows:
+                if remaining <= 0:
+                    break
+                deduct = min(sr['qty'], remaining)
+                remaining -= deduct
+                if sr['qty'] <= deduct:
+                    self._conn.execute(
+                        "UPDATE paper_positions SET status='CLOSED', qty=0 WHERE id=?",
+                        (sr['id'],))
+                else:
+                    self._conn.execute(
+                        "UPDATE paper_positions SET qty=qty-? WHERE id=?",
+                        (deduct, sr['id']))
             self._log_trade(now, 'ASSIGN_CC', pos['ticker'], pos_id,
                           f'CC assigned: sold {qty*100} shares @ ${strike:.2f}, '
                           f'+${entry*qty*100:,.2f} premium, P&L ${pnl:,.2f}',
@@ -419,6 +439,11 @@ class OIEDB:
             INSERT INTO paper_trades (ts, event, ticker, pos_id, detail, cash_change, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (ts, event, ticker, pos_id, detail, cash_change, datetime.now().isoformat()))
+        # Update cash state on every trade
+        if cash_change != 0:
+            current = float(self.get_state('cash', '0'))
+            new_cash = round(current + cash_change, 2)
+            self.set_state('cash', str(new_cash))
 
     def get_recent_events(self, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(

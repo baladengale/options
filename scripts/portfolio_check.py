@@ -207,7 +207,7 @@ def main():
     print(f"  🛡️  POSITION SIZING GUARDRAILS")
     print(f"{'='*90}")
     print(f"  Net Liq: ${net_liq:>12,.0f} | Liquid: ${liquid:>10,.0f} ({gr.cash_buffer_pct:.0f}%) | "
-          f"Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS})")
+          f"Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS()})")
     print(f"  Max single: {gr.max_single_position_pct:.0f}% (limit 15%) | "
           f"Max sector: {gr.max_sector_pct:.0f}% (limit 25%)")
     if gr.worst_case_shortfall > 0:

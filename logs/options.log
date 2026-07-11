@@ -1,0 +1,420 @@
+2026-07-11 19:06:45,829 [options.oie] INFO Cycle starting — dry_run=False
+2026-07-11 19:09:11,152 [options.oie] ERROR Cycle failed: 'OIEEngine' object has no attribute '_stock_prices'
+Traceback (most recent call last):
+  File "/Users/swara/Documents/bala/options/scripts/oie_engine.py", line 459, in run_cycle
+    stock_mv = sum(
+  File "/Users/swara/Documents/bala/options/scripts/oie_engine.py", line 460, in <genexpr>
+    qty * (self._stock_prices.get(t, 0) or 0)
+AttributeError: 'OIEEngine' object has no attribute '_stock_prices'
+2026-07-11 19:11:21,529 [options.screener] INFO SCAN START: 19 tickers, regime=NEUTRAL, vix=20.0
+2026-07-11 19:11:21,780 [options.screener] DEBUG   TSLA: price=$407.76, spread=0.0%, rsi=0
+2026-07-11 19:11:23,878 [options.screener] DEBUG   TSLA: 2174 option contracts fetched
+2026-07-11 19:11:24,138 [options.screener] DEBUG   INTC: price=$109.84, spread=0.0%, rsi=0
+2026-07-11 19:11:25,663 [options.screener] DEBUG   INTC: 1398 option contracts fetched
+2026-07-11 19:11:25,918 [options.screener] DEBUG   KO: price=$83.49, spread=0.1%, rsi=0
+2026-07-11 19:11:26,970 [options.screener] DEBUG   KO: 430 option contracts fetched
+2026-07-11 19:11:27,226 [options.screener] DEBUG   SNDK: price=$1915.92, spread=0.1%, rsi=0
+2026-07-11 19:11:32,575 [options.screener] DEBUG   SNDK: 2940 option contracts fetched
+2026-07-11 19:11:32,836 [options.screener] DEBUG   SKHYV: price=$168.01, spread=0.1%, rsi=0
+2026-07-11 19:11:38,993 [options.screener] DEBUG   SKHYV: 0 option contracts fetched
+2026-07-11 19:11:38,994 [options.screener] DEBUG   SKHYV: SKIP — no option contracts
+2026-07-11 19:11:38,994 [options.screener] DEBUG   SKHY: price=$149.00, spread=0.0%, rsi=0
+2026-07-11 19:11:45,148 [options.screener] DEBUG   SKHY: 0 option contracts fetched
+2026-07-11 19:11:45,149 [options.screener] DEBUG   SKHY: SKIP — no option contracts
+2026-07-11 19:11:45,149 [options.screener] DEBUG   MU: price=$979.30, spread=0.0%, rsi=0
+2026-07-11 19:11:51,305 [options.screener] DEBUG   MU: 0 option contracts fetched
+2026-07-11 19:11:51,305 [options.screener] DEBUG   MU: SKIP — no option contracts
+2026-07-11 19:11:51,305 [options.screener] DEBUG   NBIS: price=$219.65, spread=0.2%, rsi=0
+2026-07-11 19:11:54,115 [options.screener] DEBUG   NBIS: 902 option contracts fetched
+2026-07-11 19:11:54,373 [options.screener] DEBUG   BE: price=$244.61, spread=0.1%, rsi=0
+2026-07-11 19:11:55,728 [options.screener] DEBUG   BE: 1082 option contracts fetched
+2026-07-11 19:11:55,986 [options.screener] DEBUG   MRVL: price=$235.81, spread=0.1%, rsi=0
+2026-07-11 19:11:57,317 [options.screener] DEBUG   MRVL: 992 option contracts fetched
+2026-07-11 19:11:57,575 [options.screener] DEBUG   MSFT: price=$385.10, spread=0.0%, rsi=0
+2026-07-11 19:12:01,870 [options.screener] DEBUG   MSFT: 858 option contracts fetched
+2026-07-11 19:12:02,127 [options.screener] DEBUG   SPCX: price=$145.30, spread=0.0%, rsi=0
+2026-07-11 19:12:08,282 [options.screener] DEBUG   SPCX: 0 option contracts fetched
+2026-07-11 19:12:08,283 [options.screener] DEBUG   SPCX: SKIP — no option contracts
+2026-07-11 19:12:08,284 [options.screener] DEBUG   AMZN: price=$245.34, spread=0.1%, rsi=0
+2026-07-11 19:12:14,439 [options.screener] DEBUG   AMZN: 0 option contracts fetched
+2026-07-11 19:12:14,440 [options.screener] DEBUG   AMZN: SKIP — no option contracts
+2026-07-11 19:12:14,440 [options.screener] DEBUG   AAPL: price=$315.32, spread=0.0%, rsi=0
+2026-07-11 19:12:20,592 [options.screener] DEBUG   AAPL: 0 option contracts fetched
+2026-07-11 19:12:20,593 [options.screener] DEBUG   AAPL: SKIP — no option contracts
+2026-07-11 19:12:20,593 [options.screener] DEBUG   PLTR: price=$126.79, spread=0.0%, rsi=0
+2026-07-11 19:12:24,602 [options.screener] DEBUG   PLTR: 366 option contracts fetched
+2026-07-11 19:12:24,858 [options.screener] DEBUG   META: price=$669.21, spread=0.0%, rsi=0
+2026-07-11 19:12:27,222 [options.screener] DEBUG   META: 2998 option contracts fetched
+2026-07-11 19:12:27,483 [options.screener] DEBUG   AVGO: price=$399.97, spread=0.0%, rsi=0
+2026-07-11 19:12:29,062 [options.screener] DEBUG   AVGO: 1560 option contracts fetched
+2026-07-11 19:12:29,321 [options.screener] DEBUG   GOOG: price=$355.03, spread=0.0%, rsi=0
+2026-07-11 19:12:32,080 [options.screener] DEBUG   GOOG: 802 option contracts fetched
+2026-07-11 19:12:32,338 [options.screener] DEBUG   COST: price=$916.25, spread=0.1%, rsi=0
+2026-07-11 19:12:38,491 [options.screener] DEBUG   COST: 0 option contracts fetched
+2026-07-11 19:12:38,493 [options.screener] DEBUG   COST: SKIP — no option contracts
+2026-07-11 19:12:40,481 [options.oie] INFO Cycle starting — dry_run=False
+2026-07-11 19:15:11,427 [options.oie] WARNING Portfolio BLOCKS: ['V at 15.5% of portfolio > 15% limit. Reduce size.', 'V at 15.7% of portfolio > 15% limit. Reduce size.', 'V at 15.3% of portfolio > 15% limit. Reduce size.', 'AMD at 21.7% of portfolio > 15% limit. Reduce size.', 'V at 50.1% of portfolio > 15% limit. Reduce size.']
+2026-07-11 19:15:11,435 [options.oie] INFO Cycle complete: 151.0s, value=$47,071.73, new=0, closed=0, positions=23
+2026-07-11 23:41:19,169 [options.oie] INFO Cycle starting — dry_run=False
+2026-07-11 23:42:25,676 [options.oie] WARNING Portfolio BLOCKS: ['V at 73.0% of portfolio > 15% limit. Reduce size.', 'V at 74.0% of portfolio > 15% limit. Reduce size.', 'V at 72.0% of portfolio > 15% limit. Reduce size.', 'AMD at 102.4% of portfolio > 15% limit. Reduce size.', 'ASTS at 24.3% of portfolio > 15% limit. Reduce size.', 'IREN at 60.8% of portfolio > 15% limit. Reduce size.', 'SOFI at 34.5% of portfolio > 15% limit. Reduce size.']
+2026-07-11 23:42:25,687 [options.oie] INFO Cycle complete: 66.5s, value=$49,557.00, new=0, closed=0, positions=9
+2026-07-11 23:56:53,218 [options.oie] INFO Cycle starting — dry_run=False
+2026-07-11 23:59:56,181 [options.oie] WARNING Portfolio BLOCKS: ['V at 15.3% of portfolio > 15% limit. Reduce size.', 'V at 15.5% of portfolio > 15% limit. Reduce size.', 'V at 15.1% of portfolio > 15% limit. Reduce size.', 'AMD at 21.5% of portfolio > 15% limit. Reduce size.']
+2026-07-11 23:59:56,191 [options.oie] INFO Cycle complete: 183.0s, value=$49,612.00, new=0, closed=0, positions=9
+2026-07-12 00:00:03,874 [options.screener] INFO SCAN START: 11 tickers, regime=CAUTIOUS, vix=20.0
+2026-07-12 00:03:46,682 [options.screener] INFO SCAN START: 19 tickers, regime=CAUTIOUS, vix=15.03
+2026-07-12 00:03:46,960 [options.screener] DEBUG   TSLA: price=$407.76, spread=0.0%, rsi=0
+2026-07-12 00:03:50,942 [options.screener] DEBUG   TSLA: 2174 option contracts fetched
+2026-07-12 00:03:51,198 [options.screener] DEBUG   TSLA CSP candidate: $382 2026-07-20 DTE=9 Δ=0.164 RoC=25.7% score=11.1
+2026-07-12 00:03:51,198 [options.screener] DEBUG   TSLA CSP candidate: $385 2026-07-20 DTE=9 Δ=0.188 RoC=30.4% score=9.8
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $388 2026-07-20 DTE=9 Δ=0.212 RoC=35.1% score=9.8
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $390 2026-07-20 DTE=9 Δ=0.238 RoC=40.6% score=8.3
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $370 2026-07-24 DTE=13 Δ=0.162 RoC=28.8% score=8.6
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $372 2026-07-24 DTE=13 Δ=0.177 RoC=32.0% score=8.8
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $375 2026-07-24 DTE=13 Δ=0.193 RoC=35.2% score=8.3
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $378 2026-07-24 DTE=13 Δ=0.210 RoC=39.0% score=7.8
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $380 2026-07-24 DTE=13 Δ=0.228 RoC=43.2% score=6.8
+2026-07-12 00:03:51,199 [options.screener] DEBUG   TSLA CSP candidate: $382 2026-07-24 DTE=13 Δ=0.247 RoC=47.3% score=9.3
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $365 2026-07-31 DTE=20 Δ=0.162 RoC=22.2% score=7.6
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $370 2026-07-31 DTE=20 Δ=0.189 RoC=26.6% score=6.1
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $375 2026-07-31 DTE=20 Δ=0.220 RoC=31.6% score=5.8
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $360 2026-08-07 DTE=27 Δ=0.159 RoC=18.4% score=7.1
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $365 2026-08-07 DTE=27 Δ=0.183 RoC=21.7% score=5.6
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $370 2026-08-07 DTE=27 Δ=0.210 RoC=25.2% score=6.1
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $375 2026-08-07 DTE=27 Δ=0.238 RoC=29.2% score=5.1
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $355 2026-08-14 DTE=34 Δ=0.155 RoC=15.9% score=5.6
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $360 2026-08-14 DTE=34 Δ=0.176 RoC=18.3% score=6.6
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $365 2026-08-14 DTE=34 Δ=0.200 RoC=21.0% score=6.6
+2026-07-12 00:03:51,200 [options.screener] DEBUG   TSLA CSP candidate: $370 2026-08-14 DTE=34 Δ=0.225 RoC=24.2% score=6.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $350 2026-08-21 DTE=41 Δ=0.150 RoC=14.1% score=5.1
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $355 2026-08-21 DTE=41 Δ=0.170 RoC=16.2% score=5.1
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $360 2026-08-21 DTE=41 Δ=0.191 RoC=18.4% score=4.1
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $365 2026-08-21 DTE=41 Δ=0.214 RoC=20.9% score=5.1
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $370 2026-08-21 DTE=41 Δ=0.238 RoC=23.6% score=4.1
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $340 2026-09-18 DTE=69 Δ=0.158 RoC=12.1% score=5.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $345 2026-09-18 DTE=69 Δ=0.175 RoC=13.4% score=7.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $350 2026-09-18 DTE=69 Δ=0.192 RoC=14.8% score=6.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $355 2026-09-18 DTE=69 Δ=0.210 RoC=16.4% score=6.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $360 2026-09-18 DTE=69 Δ=0.229 RoC=18.0% score=6.6
+2026-07-12 00:03:51,201 [options.screener] DEBUG   TSLA CSP candidate: $365 2026-09-18 DTE=69 Δ=0.249 RoC=19.8% score=5.6
+2026-07-12 00:03:51,202 [options.screener] DEBUG   INTC: price=$109.84, spread=0.0%, rsi=0
+2026-07-12 00:03:54,386 [options.screener] DEBUG   INTC: 1398 option contracts fetched
+2026-07-12 00:03:54,643 [options.screener] DEBUG   INTC CSP candidate: $100 2026-07-20 DTE=9 Δ=0.212 RoC=58.8% score=9.6
+2026-07-12 00:03:54,644 [options.screener] DEBUG   INTC CSP candidate: $100 2026-07-22 DTE=11 Δ=0.230 RoC=69.7% score=8.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $93 2026-07-24 DTE=13 Δ=0.178 RoC=68.5% score=8.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $94 2026-07-24 DTE=13 Δ=0.191 RoC=74.1% score=8.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $95 2026-07-24 DTE=13 Δ=0.205 RoC=81.3% score=8.1
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $96 2026-07-24 DTE=13 Δ=0.222 RoC=87.7% score=9.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $97 2026-07-24 DTE=13 Δ=0.236 RoC=92.6% score=9.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $90 2026-07-31 DTE=20 Δ=0.167 RoC=50.7% score=6.6
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $93 2026-07-31 DTE=20 Δ=0.202 RoC=61.8% score=7.1
+2026-07-12 00:03:54,645 [options.screener] DEBUG   INTC CSP candidate: $95 2026-07-31 DTE=20 Δ=0.228 RoC=71.1% score=6.6
+2026-07-12 00:03:54,646 [options.screener] DEBUG   INTC CSP candidate: $90 2026-08-07 DTE=27 Δ=0.184 RoC=47.3% score=6.3
+2026-07-12 00:03:54,646 [options.screener] DEBUG   INTC CSP candidate: $95 2026-08-07 DTE=27 Δ=0.241 RoC=64.7% score=5.1
+2026-07-12 00:03:54,646 [options.screener] DEBUG   INTC CSP candidate: $90 2026-08-14 DTE=34 Δ=0.197 RoC=45.3% score=5.8
+2026-07-12 00:03:54,646 [options.screener] DEBUG   INTC CSP candidate: $85 2026-08-21 DTE=41 Δ=0.160 RoC=34.0% score=4.8
+2026-07-12 00:03:54,646 [options.screener] DEBUG   INTC CSP candidate: $88 2026-08-21 DTE=41 Δ=0.183 RoC=38.7% score=5.3
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $90 2026-08-21 DTE=41 Δ=0.208 RoC=45.0% score=4.3
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $92 2026-08-21 DTE=41 Δ=0.233 RoC=50.5% score=3.6
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $80 2026-09-18 DTE=69 Δ=0.152 RoC=25.8% score=7.6
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $82 2026-09-18 DTE=69 Δ=0.171 RoC=29.2% score=8.6
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $85 2026-09-18 DTE=69 Δ=0.190 RoC=32.4% score=7.3
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $88 2026-09-18 DTE=69 Δ=0.211 RoC=36.0% score=7.3
+2026-07-12 00:03:54,647 [options.screener] DEBUG   INTC CSP candidate: $90 2026-09-18 DTE=69 Δ=0.233 RoC=40.0% score=6.8
+2026-07-12 00:03:54,648 [options.screener] DEBUG   KO: price=$83.49, spread=0.1%, rsi=0
+2026-07-12 00:03:57,486 [options.screener] DEBUG   KO: 430 option contracts fetched
+2026-07-12 00:03:57,740 [options.screener] DEBUG   KO CSP candidate: $80 2026-07-31 DTE=20 Δ=0.214 RoC=12.1% score=6.9
+2026-07-12 00:03:57,741 [options.screener] DEBUG   SNDK: price=$1915.92, spread=0.1%, rsi=0
+2026-07-12 00:04:04,260 [options.screener] DEBUG   SNDK: 2940 option contracts fetched
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1520 2026-07-24 DTE=13 Δ=0.156 RoC=81.1% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1525 2026-07-24 DTE=13 Δ=0.158 RoC=81.9% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1550 2026-07-24 DTE=13 Δ=0.172 RoC=90.9% score=8.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1555 2026-07-24 DTE=13 Δ=0.176 RoC=92.3% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1570 2026-07-24 DTE=13 Δ=0.184 RoC=96.9% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1585 2026-07-24 DTE=13 Δ=0.193 RoC=100.3% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1590 2026-07-24 DTE=13 Δ=0.197 RoC=103.5% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1595 2026-07-24 DTE=13 Δ=0.198 RoC=105.3% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1600 2026-07-24 DTE=13 Δ=0.201 RoC=106.9% score=6.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1605 2026-07-24 DTE=13 Δ=0.205 RoC=106.4% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1615 2026-07-24 DTE=13 Δ=0.212 RoC=112.0% score=9.6
+2026-07-12 00:04:04,520 [options.screener] DEBUG   SNDK CSP candidate: $1620 2026-07-24 DTE=13 Δ=0.214 RoC=111.3% score=9.6
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1650 2026-07-24 DTE=13 Δ=0.236 RoC=124.6% score=7.6
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1660 2026-07-24 DTE=13 Δ=0.241 RoC=125.2% score=9.6
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1450 2026-07-31 DTE=20 Δ=0.153 RoC=67.8% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1455 2026-07-31 DTE=20 Δ=0.156 RoC=69.4% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1460 2026-07-31 DTE=20 Δ=0.158 RoC=71.6% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1465 2026-07-31 DTE=20 Δ=0.160 RoC=73.0% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1470 2026-07-31 DTE=20 Δ=0.163 RoC=73.2% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1475 2026-07-31 DTE=20 Δ=0.165 RoC=75.0% score=8.1
+2026-07-12 00:04:04,521 [options.screener] DEBUG   SNDK CSP candidate: $1490 2026-07-31 DTE=20 Δ=0.173 RoC=78.4% score=7.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1500 2026-07-31 DTE=20 Δ=0.176 RoC=80.3% score=6.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1550 2026-07-31 DTE=20 Δ=0.203 RoC=91.7% score=8.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1580 2026-07-31 DTE=20 Δ=0.220 RoC=98.1% score=8.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1585 2026-07-31 DTE=20 Δ=0.223 RoC=100.1% score=8.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1590 2026-07-31 DTE=20 Δ=0.225 RoC=100.4% score=7.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1595 2026-07-31 DTE=20 Δ=0.228 RoC=101.9% score=8.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1600 2026-07-31 DTE=20 Δ=0.231 RoC=104.3% score=6.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1400 2026-08-07 DTE=27 Δ=0.160 RoC=71.9% score=7.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1450 2026-08-07 DTE=27 Δ=0.182 RoC=80.6% score=7.1
+2026-07-12 00:04:04,522 [options.screener] DEBUG   SNDK CSP candidate: $1495 2026-08-07 DTE=27 Δ=0.202 RoC=87.9% score=7.1
+2026-07-12 00:04:04,523 [options.screener] DEBUG   SNDK CSP candidate: $1500 2026-08-07 DTE=27 Δ=0.203 RoC=89.9% score=6.1
+2026-07-12 00:04:04,523 [options.screener] DEBUG   SNDK CSP candidate: $1540 2026-08-14 DTE=34 Δ=0.231 RoC=90.7% score=6.1
+2026-07-12 00:04:04,523 [options.screener] DEBUG   SKHYV: price=$168.01, spread=0.1%, rsi=0
+2026-07-12 00:04:12,345 [options.screener] DEBUG   SKHYV: 0 option contracts fetched
+2026-07-12 00:04:12,345 [options.screener] DEBUG   SKHYV: SKIP — no option contracts
+2026-07-12 00:04:12,346 [options.screener] DEBUG   SKHY: price=$149.00, spread=0.0%, rsi=0
+2026-07-12 00:04:20,464 [options.screener] DEBUG   SKHY: 0 option contracts fetched
+2026-07-12 00:04:20,465 [options.screener] DEBUG   SKHY: SKIP — no option contracts
+2026-07-12 00:04:20,465 [options.screener] DEBUG   MU: price=$979.30, spread=0.0%, rsi=0
+2026-07-12 00:04:26,761 [options.screener] DEBUG   MU: 5356 option contracts fetched
+2026-07-12 00:04:27,022 [options.screener] DEBUG   MU CSP candidate: $850 2026-07-20 DTE=9 Δ=0.162 RoC=56.1% score=8.3
+2026-07-12 00:04:27,022 [options.screener] DEBUG   MU CSP candidate: $890 2026-07-20 DTE=9 Δ=0.236 RoC=87.5% score=8.3
+2026-07-12 00:04:27,022 [options.screener] DEBUG   MU CSP candidate: $895 2026-07-20 DTE=9 Δ=0.249 RoC=92.4% score=8.3
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $840 2026-07-22 DTE=11 Δ=0.170 RoC=59.1% score=7.3
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $845 2026-07-22 DTE=11 Δ=0.177 RoC=61.7% score=7.3
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $850 2026-07-22 DTE=11 Δ=0.185 RoC=65.0% score=8.3
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $815 2026-07-24 DTE=13 Δ=0.155 RoC=55.6% score=7.3
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $820 2026-07-24 DTE=13 Δ=0.163 RoC=60.4% score=5.8
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $825 2026-07-24 DTE=13 Δ=0.167 RoC=61.8% score=5.8
+2026-07-12 00:04:27,023 [options.screener] DEBUG   MU CSP candidate: $830 2026-07-24 DTE=13 Δ=0.176 RoC=65.3% score=7.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $835 2026-07-24 DTE=13 Δ=0.183 RoC=66.2% score=8.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $840 2026-07-24 DTE=13 Δ=0.190 RoC=68.9% score=6.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $845 2026-07-24 DTE=13 Δ=0.197 RoC=71.4% score=7.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $850 2026-07-24 DTE=13 Δ=0.206 RoC=76.5% score=5.8
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $855 2026-07-24 DTE=13 Δ=0.213 RoC=78.2% score=7.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $860 2026-07-24 DTE=13 Δ=0.222 RoC=82.6% score=6.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $865 2026-07-24 DTE=13 Δ=0.230 RoC=85.2% score=7.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $870 2026-07-24 DTE=13 Δ=0.238 RoC=89.7% score=7.3
+2026-07-12 00:04:27,024 [options.screener] DEBUG   MU CSP candidate: $875 2026-07-24 DTE=13 Δ=0.247 RoC=92.6% score=7.3
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $790 2026-07-31 DTE=20 Δ=0.159 RoC=49.0% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $795 2026-07-31 DTE=20 Δ=0.163 RoC=49.2% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $800 2026-07-31 DTE=20 Δ=0.170 RoC=52.9% score=4.3
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $805 2026-07-31 DTE=20 Δ=0.174 RoC=51.0% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $810 2026-07-31 DTE=20 Δ=0.182 RoC=55.9% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $815 2026-07-31 DTE=20 Δ=0.187 RoC=55.5% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $820 2026-07-31 DTE=20 Δ=0.194 RoC=60.1% score=5.3
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $825 2026-07-31 DTE=20 Δ=0.200 RoC=59.8% score=6.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $830 2026-07-31 DTE=20 Δ=0.207 RoC=64.3% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $835 2026-07-31 DTE=20 Δ=0.214 RoC=65.5% score=5.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $840 2026-07-31 DTE=20 Δ=0.221 RoC=69.1% score=4.8
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $850 2026-07-31 DTE=20 Δ=0.235 RoC=73.2% score=4.3
+2026-07-12 00:04:27,025 [options.screener] DEBUG   MU CSP candidate: $855 2026-07-31 DTE=20 Δ=0.242 RoC=74.8% score=5.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $770 2026-08-07 DTE=27 Δ=0.154 RoC=39.2% score=5.5
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $780 2026-08-07 DTE=27 Δ=0.166 RoC=42.6% score=5.5
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $785 2026-08-07 DTE=27 Δ=0.170 RoC=43.6% score=6.5
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $790 2026-08-07 DTE=27 Δ=0.178 RoC=48.7% score=3.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $795 2026-08-07 DTE=27 Δ=0.182 RoC=49.3% score=4.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $800 2026-08-07 DTE=27 Δ=0.188 RoC=51.2% score=3.3
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $815 2026-08-07 DTE=27 Δ=0.205 RoC=53.2% score=5.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $820 2026-08-07 DTE=27 Δ=0.213 RoC=55.0% score=4.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $825 2026-08-07 DTE=27 Δ=0.217 RoC=59.2% score=5.8
+2026-07-12 00:04:27,026 [options.screener] DEBUG   MU CSP candidate: $830 2026-08-07 DTE=27 Δ=0.224 RoC=58.5% score=4.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $770 2026-08-14 DTE=34 Δ=0.170 RoC=40.2% score=4.5
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $780 2026-08-14 DTE=34 Δ=0.182 RoC=42.4% score=5.5
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $785 2026-08-14 DTE=34 Δ=0.186 RoC=43.8% score=4.5
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $790 2026-08-14 DTE=34 Δ=0.192 RoC=46.9% score=4.5
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $795 2026-08-14 DTE=34 Δ=0.197 RoC=47.4% score=5.5
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $800 2026-08-14 DTE=34 Δ=0.203 RoC=50.5% score=2.3
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $805 2026-08-14 DTE=34 Δ=0.208 RoC=50.3% score=3.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $810 2026-08-14 DTE=34 Δ=0.213 RoC=51.4% score=3.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $815 2026-08-14 DTE=34 Δ=0.219 RoC=52.2% score=3.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $820 2026-08-14 DTE=34 Δ=0.225 RoC=53.7% score=3.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $825 2026-08-14 DTE=34 Δ=0.230 RoC=55.0% score=4.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $830 2026-08-14 DTE=34 Δ=0.237 RoC=57.8% score=4.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $835 2026-08-14 DTE=34 Δ=0.243 RoC=59.7% score=4.8
+2026-07-12 00:04:27,027 [options.screener] DEBUG   MU CSP candidate: $840 2026-08-14 DTE=34 Δ=0.250 RoC=61.7% score=4.8
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $740 2026-08-21 DTE=41 Δ=0.154 RoC=36.0% score=3.5
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $750 2026-08-21 DTE=41 Δ=0.163 RoC=37.7% score=3.0
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $760 2026-08-21 DTE=41 Δ=0.172 RoC=40.2% score=2.0
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $770 2026-08-21 DTE=41 Δ=0.183 RoC=42.5% score=4.0
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $780 2026-08-21 DTE=41 Δ=0.193 RoC=44.7% score=4.0
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $790 2026-08-21 DTE=41 Δ=0.202 RoC=46.7% score=3.0
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $800 2026-08-21 DTE=41 Δ=0.213 RoC=49.7% score=2.3
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $810 2026-08-21 DTE=41 Δ=0.224 RoC=52.0% score=3.8
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $820 2026-08-21 DTE=41 Δ=0.235 RoC=54.9% score=1.3
+2026-07-12 00:04:27,028 [options.screener] DEBUG   MU CSP candidate: $830 2026-08-21 DTE=41 Δ=0.246 RoC=57.7% score=1.3
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $700 2026-09-18 DTE=69 Δ=0.151 RoC=28.7% score=5.3
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $710 2026-09-18 DTE=69 Δ=0.159 RoC=30.1% score=6.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $720 2026-09-18 DTE=69 Δ=0.167 RoC=31.4% score=5.0
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $730 2026-09-18 DTE=69 Δ=0.175 RoC=32.9% score=6.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $740 2026-09-18 DTE=69 Δ=0.183 RoC=33.9% score=5.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $750 2026-09-18 DTE=69 Δ=0.192 RoC=36.1% score=3.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $760 2026-09-18 DTE=69 Δ=0.201 RoC=37.6% score=5.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $780 2026-09-18 DTE=69 Δ=0.218 RoC=40.7% score=5.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $800 2026-09-18 DTE=69 Δ=0.237 RoC=44.3% score=4.5
+2026-07-12 00:04:27,029 [options.screener] DEBUG   MU CSP candidate: $810 2026-09-18 DTE=69 Δ=0.246 RoC=46.1% score=6.0
+2026-07-12 00:04:27,029 [options.screener] DEBUG   NBIS: price=$219.65, spread=0.2%, rsi=0
+2026-07-12 00:04:30,170 [options.screener] DEBUG   NBIS: 902 option contracts fetched
+2026-07-12 00:04:30,426 [options.screener] DEBUG   NBIS CSP candidate: $175 2026-07-24 DTE=13 Δ=0.159 RoC=81.8% score=7.8
+2026-07-12 00:04:30,426 [options.screener] DEBUG   NBIS CSP candidate: $180 2026-07-24 DTE=13 Δ=0.187 RoC=97.5% score=7.3
+2026-07-12 00:04:30,426 [options.screener] DEBUG   NBIS CSP candidate: $185 2026-07-24 DTE=13 Δ=0.212 RoC=105.5% score=7.8
+2026-07-12 00:04:30,426 [options.screener] DEBUG   NBIS CSP candidate: $188 2026-07-24 DTE=13 Δ=0.227 RoC=113.1% score=9.8
+2026-07-12 00:04:30,426 [options.screener] DEBUG   NBIS CSP candidate: $190 2026-07-24 DTE=13 Δ=0.244 RoC=132.3% score=7.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $170 2026-07-31 DTE=20 Δ=0.171 RoC=80.5% score=5.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $175 2026-07-31 DTE=20 Δ=0.193 RoC=86.6% score=5.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $180 2026-07-31 DTE=20 Δ=0.215 RoC=95.3% score=5.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $185 2026-07-31 DTE=20 Δ=0.239 RoC=105.1% score=5.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $160 2026-08-07 DTE=27 Δ=0.153 RoC=61.7% score=6.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $165 2026-08-07 DTE=27 Δ=0.172 RoC=70.5% score=5.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $170 2026-08-07 DTE=27 Δ=0.196 RoC=78.3% score=6.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $175 2026-08-07 DTE=27 Δ=0.214 RoC=88.1% score=6.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $180 2026-08-07 DTE=27 Δ=0.235 RoC=97.6% score=6.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $155 2026-08-14 DTE=34 Δ=0.155 RoC=59.9% score=5.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $160 2026-08-14 DTE=34 Δ=0.173 RoC=66.4% score=6.3
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $155 2026-08-21 DTE=41 Δ=0.166 RoC=66.9% score=3.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $160 2026-08-21 DTE=41 Δ=0.181 RoC=71.5% score=2.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $165 2026-08-21 DTE=41 Δ=0.200 RoC=77.4% score=4.8
+2026-07-12 00:04:30,427 [options.screener] DEBUG   NBIS CSP candidate: $170 2026-08-21 DTE=41 Δ=0.217 RoC=84.0% score=3.8
+2026-07-12 00:04:30,428 [options.screener] DEBUG   NBIS CSP candidate: $175 2026-08-21 DTE=41 Δ=0.235 RoC=89.8% score=3.8
+2026-07-12 00:04:30,428 [options.screener] DEBUG   NBIS CSP candidate: $150 2026-09-18 DTE=69 Δ=0.170 RoC=52.5% score=6.3
+2026-07-12 00:04:30,428 [options.screener] DEBUG   NBIS CSP candidate: $155 2026-09-18 DTE=69 Δ=0.184 RoC=56.1% score=6.3
+2026-07-12 00:04:30,428 [options.screener] DEBUG   NBIS CSP candidate: $160 2026-09-18 DTE=69 Δ=0.199 RoC=60.2% score=6.3
+2026-07-12 00:04:30,428 [options.screener] DEBUG   BE: price=$244.61, spread=0.1%, rsi=0
+2026-07-12 00:04:32,757 [options.screener] DEBUG   BE: 1082 option contracts fetched
+2026-07-12 00:04:33,013 [options.screener] DEBUG   BE CSP candidate: $195 2026-07-24 DTE=13 Δ=0.169 RoC=91.4% score=8.4
+2026-07-12 00:04:33,013 [options.screener] DEBUG   BE CSP candidate: $200 2026-07-24 DTE=13 Δ=0.189 RoC=107.4% score=6.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $205 2026-07-24 DTE=13 Δ=0.212 RoC=117.1% score=6.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $210 2026-07-24 DTE=13 Δ=0.240 RoC=139.0% score=6.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $175 2026-07-31 DTE=20 Δ=0.151 RoC=93.9% score=5.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $180 2026-07-31 DTE=20 Δ=0.165 RoC=98.3% score=5.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $185 2026-07-31 DTE=20 Δ=0.184 RoC=109.0% score=6.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $190 2026-07-31 DTE=20 Δ=0.201 RoC=121.5% score=6.4
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $195 2026-07-31 DTE=20 Δ=0.219 RoC=135.7% score=6.9
+2026-07-12 00:04:33,014 [options.screener] DEBUG   BE CSP candidate: $200 2026-07-31 DTE=20 Δ=0.237 RoC=147.8% score=4.4
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $175 2026-08-07 DTE=27 Δ=0.159 RoC=76.1% score=5.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $180 2026-08-07 DTE=27 Δ=0.174 RoC=82.2% score=4.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $190 2026-08-07 DTE=27 Δ=0.208 RoC=102.1% score=6.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $195 2026-08-07 DTE=27 Δ=0.226 RoC=109.5% score=6.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $200 2026-08-07 DTE=27 Δ=0.245 RoC=125.0% score=4.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $170 2026-08-14 DTE=34 Δ=0.153 RoC=63.8% score=4.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $175 2026-08-14 DTE=34 Δ=0.168 RoC=71.2% score=5.9
+2026-07-12 00:04:33,015 [options.screener] DEBUG   BE CSP candidate: $180 2026-08-14 DTE=34 Δ=0.184 RoC=74.8% score=5.9
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $185 2026-08-14 DTE=34 Δ=0.200 RoC=85.9% score=5.9
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $190 2026-08-14 DTE=34 Δ=0.216 RoC=91.8% score=5.9
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $195 2026-08-14 DTE=34 Δ=0.232 RoC=98.5% score=5.9
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $200 2026-08-14 DTE=34 Δ=0.249 RoC=106.3% score=5.9
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $170 2026-08-21 DTE=41 Δ=0.161 RoC=65.5% score=3.4
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $175 2026-08-21 DTE=41 Δ=0.175 RoC=70.5% score=3.4
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $180 2026-08-21 DTE=41 Δ=0.190 RoC=76.9% score=3.4
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $185 2026-08-21 DTE=41 Δ=0.205 RoC=82.8% score=4.4
+2026-07-12 00:04:33,016 [options.screener] DEBUG   BE CSP candidate: $190 2026-08-21 DTE=41 Δ=0.221 RoC=90.2% score=4.4
+2026-07-12 00:04:33,017 [options.screener] DEBUG   BE CSP candidate: $195 2026-08-21 DTE=41 Δ=0.236 RoC=93.6% score=4.4
+2026-07-12 00:04:33,017 [options.screener] DEBUG   BE CSP candidate: $160 2026-09-18 DTE=69 Δ=0.154 RoC=50.7% score=4.9
+2026-07-12 00:04:33,017 [options.screener] DEBUG   BE CSP candidate: $180 2026-09-18 DTE=69 Δ=0.205 RoC=66.0% score=4.9
+2026-07-12 00:04:33,017 [options.screener] DEBUG   BE CSP candidate: $190 2026-09-18 DTE=69 Δ=0.231 RoC=71.8% score=5.9
+2026-07-12 00:04:33,017 [options.screener] DEBUG   MRVL: price=$235.81, spread=0.1%, rsi=0
+2026-07-12 00:04:40,398 [options.screener] DEBUG   MRVL: 0 option contracts fetched
+2026-07-12 00:04:40,400 [options.screener] DEBUG   MRVL: SKIP — no option contracts
+2026-07-12 00:04:40,400 [options.screener] DEBUG   MSFT: price=$385.10, spread=0.0%, rsi=0
+2026-07-12 00:04:47,974 [options.screener] DEBUG   MSFT: 0 option contracts fetched
+2026-07-12 00:04:47,975 [options.screener] DEBUG   MSFT: SKIP — no option contracts
+2026-07-12 00:04:47,976 [options.screener] DEBUG   SPCX: price=$145.30, spread=0.0%, rsi=0
+2026-07-12 00:04:52,552 [options.screener] DEBUG   SPCX: 978 option contracts fetched
+2026-07-12 00:04:52,808 [options.screener] DEBUG   SPCX CSP candidate: $130 2026-07-24 DTE=13 Δ=0.171 RoC=37.8% score=8.1
+2026-07-12 00:04:52,809 [options.screener] DEBUG   SPCX CSP candidate: $134 2026-07-24 DTE=13 Δ=0.237 RoC=55.5% score=7.8
+2026-07-12 00:04:52,809 [options.screener] DEBUG   SPCX CSP candidate: $125 2026-07-31 DTE=20 Δ=0.162 RoC=32.1% score=7.0
+2026-07-12 00:04:52,809 [options.screener] DEBUG   SPCX CSP candidate: $130 2026-07-31 DTE=20 Δ=0.223 RoC=46.3% score=6.5
+2026-07-12 00:04:52,810 [options.screener] DEBUG   SPCX CSP candidate: $120 2026-08-07 DTE=27 Δ=0.173 RoC=38.3% score=5.5
+2026-07-12 00:04:52,810 [options.screener] DEBUG   SPCX CSP candidate: $125 2026-08-07 DTE=27 Δ=0.220 RoC=50.8% score=4.8
+2026-07-12 00:04:52,810 [options.screener] DEBUG   SPCX CSP candidate: $115 2026-08-14 DTE=34 Δ=0.161 RoC=35.5% score=5.5
+2026-07-12 00:04:52,810 [options.screener] DEBUG   SPCX CSP candidate: $120 2026-08-14 DTE=34 Δ=0.200 RoC=44.7% score=5.0
+2026-07-12 00:04:52,810 [options.screener] DEBUG   SPCX CSP candidate: $125 2026-08-14 DTE=34 Δ=0.242 RoC=55.0% score=2.8
+2026-07-12 00:04:52,811 [options.screener] DEBUG   SPCX CSP candidate: $110 2026-09-18 DTE=69 Δ=0.171 RoC=28.4% score=5.8
+2026-07-12 00:04:52,811 [options.screener] DEBUG   SPCX CSP candidate: $115 2026-09-18 DTE=69 Δ=0.202 RoC=33.6% score=5.5
+2026-07-12 00:04:52,811 [options.screener] DEBUG   SPCX CSP candidate: $120 2026-09-18 DTE=69 Δ=0.236 RoC=39.2% score=5.0
+2026-07-12 00:04:52,811 [options.screener] DEBUG   AMZN: price=$245.34, spread=0.1%, rsi=0
+2026-07-12 00:04:56,749 [options.screener] DEBUG   AMZN: 846 option contracts fetched
+2026-07-12 00:04:57,006 [options.screener] DEBUG   AMZN CSP candidate: $235 2026-07-20 DTE=9 Δ=0.194 RoC=18.8% score=8.3
+2026-07-12 00:04:57,007 [options.screener] DEBUG   AMZN CSP candidate: $230 2026-07-24 DTE=13 Δ=0.161 RoC=17.3% score=7.3
+2026-07-12 00:04:57,008 [options.screener] DEBUG   AMZN CSP candidate: $232 2026-07-24 DTE=13 Δ=0.200 RoC=22.1% score=7.8
+2026-07-12 00:04:57,008 [options.screener] DEBUG   AMZN CSP candidate: $235 2026-07-24 DTE=13 Δ=0.244 RoC=28.8% score=6.3
+2026-07-12 00:04:57,008 [options.screener] DEBUG   AMZN CSP candidate: $225 2026-07-31 DTE=20 Δ=0.195 RoC=23.9% score=5.8
+2026-07-12 00:04:57,009 [options.screener] DEBUG   AMZN CSP candidate: $220 2026-08-07 DTE=27 Δ=0.171 RoC=17.7% score=4.8
+2026-07-12 00:04:57,009 [options.screener] DEBUG   AMZN CSP candidate: $225 2026-08-07 DTE=27 Δ=0.218 RoC=23.4% score=4.8
+2026-07-12 00:04:57,009 [options.screener] DEBUG   AMZN CSP candidate: $220 2026-08-14 DTE=34 Δ=0.182 RoC=16.1% score=4.3
+2026-07-12 00:04:57,009 [options.screener] DEBUG   AMZN CSP candidate: $225 2026-08-14 DTE=34 Δ=0.226 RoC=19.8% score=4.3
+2026-07-12 00:04:57,010 [options.screener] DEBUG   AMZN CSP candidate: $215 2026-08-21 DTE=41 Δ=0.157 RoC=12.6% score=2.8
+2026-07-12 00:04:57,010 [options.screener] DEBUG   AMZN CSP candidate: $220 2026-08-21 DTE=41 Δ=0.195 RoC=16.0% score=3.8
+2026-07-12 00:04:57,010 [options.screener] DEBUG   AMZN CSP candidate: $225 2026-08-21 DTE=41 Δ=0.239 RoC=20.4% score=2.8
+2026-07-12 00:04:57,010 [options.screener] DEBUG   AAPL: price=$315.32, spread=0.0%, rsi=0
+2026-07-12 00:05:00,416 [options.screener] DEBUG   AAPL: 1228 option contracts fetched
+2026-07-12 00:05:00,673 [options.screener] DEBUG   AAPL CSP candidate: $308 2026-07-20 DTE=9 Δ=0.239 RoC=17.0% score=8.5
+2026-07-12 00:05:00,674 [options.screener] DEBUG   AAPL CSP candidate: $305 2026-07-22 DTE=11 Δ=0.212 RoC=12.4% score=9.5
+2026-07-12 00:05:00,674 [options.screener] DEBUG   AAPL CSP candidate: $302 2026-07-24 DTE=13 Δ=0.184 RoC=14.0% score=8.5
+2026-07-12 00:05:00,675 [options.screener] DEBUG   AAPL CSP candidate: $305 2026-07-24 DTE=13 Δ=0.225 RoC=17.1% score=8.0
+2026-07-12 00:05:00,675 [options.screener] DEBUG   AAPL CSP candidate: $295 2026-07-31 DTE=20 Δ=0.168 RoC=12.5% score=6.5
+2026-07-12 00:05:00,675 [options.screener] DEBUG   AAPL CSP candidate: $300 2026-07-31 DTE=20 Δ=0.224 RoC=17.9% score=6.5
+2026-07-12 00:05:00,676 [options.screener] DEBUG   AAPL CSP candidate: $295 2026-08-07 DTE=27 Δ=0.188 RoC=12.1% score=6.0
+2026-07-12 00:05:00,676 [options.screener] DEBUG   AAPL CSP candidate: $300 2026-08-07 DTE=27 Δ=0.243 RoC=16.2% score=5.5
+2026-07-12 00:05:00,677 [options.screener] DEBUG   PLTR: price=$126.79, spread=0.0%, rsi=0
+2026-07-12 00:05:03,274 [options.screener] DEBUG   PLTR: 1024 option contracts fetched
+2026-07-12 00:05:03,530 [options.screener] DEBUG   PLTR CSP candidate: $115 2026-07-24 DTE=13 Δ=0.153 RoC=25.4% score=8.6
+2026-07-12 00:05:03,530 [options.screener] DEBUG   PLTR CSP candidate: $116 2026-07-24 DTE=13 Δ=0.172 RoC=27.4% score=10.1
+2026-07-12 00:05:03,530 [options.screener] DEBUG   PLTR CSP candidate: $117 2026-07-24 DTE=13 Δ=0.192 RoC=32.4% score=9.8
+2026-07-12 00:05:03,530 [options.screener] DEBUG   PLTR CSP candidate: $118 2026-07-24 DTE=13 Δ=0.214 RoC=36.6% score=8.3
+2026-07-12 00:05:03,530 [options.screener] DEBUG   PLTR CSP candidate: $119 2026-07-24 DTE=13 Δ=0.240 RoC=42.9% score=8.3
+2026-07-12 00:05:03,531 [options.screener] DEBUG   PLTR CSP candidate: $113 2026-07-31 DTE=20 Δ=0.161 RoC=22.0% score=7.6
+2026-07-12 00:05:03,531 [options.screener] DEBUG   PLTR CSP candidate: $115 2026-07-31 DTE=20 Δ=0.194 RoC=27.9% score=6.1
+2026-07-12 00:05:03,531 [options.screener] DEBUG   PLTR CSP candidate: $116 2026-07-31 DTE=20 Δ=0.212 RoC=30.0% score=7.3
+2026-07-12 00:05:03,531 [options.screener] DEBUG   PLTR CSP candidate: $117 2026-07-31 DTE=20 Δ=0.232 RoC=33.4% score=7.3
+2026-07-12 00:05:03,531 [options.screener] DEBUG   PLTR CSP candidate: $108 2026-08-07 DTE=27 Δ=0.161 RoC=25.7% score=6.1
+2026-07-12 00:05:03,532 [options.screener] DEBUG   PLTR CSP candidate: $110 2026-08-07 DTE=27 Δ=0.186 RoC=30.4% score=5.8
+2026-07-12 00:05:03,532 [options.screener] DEBUG   PLTR CSP candidate: $111 2026-08-07 DTE=27 Δ=0.200 RoC=32.8% score=7.3
+2026-07-12 00:05:03,532 [options.screener] DEBUG   PLTR CSP candidate: $112 2026-08-07 DTE=27 Δ=0.214 RoC=35.4% score=8.3
+2026-07-12 00:05:03,532 [options.screener] DEBUG   PLTR CSP candidate: $113 2026-08-07 DTE=27 Δ=0.227 RoC=37.7% score=6.8
+2026-07-12 00:05:03,532 [options.screener] DEBUG   PLTR CSP candidate: $114 2026-08-07 DTE=27 Δ=0.242 RoC=40.9% score=7.8
+2026-07-12 00:05:03,533 [options.screener] DEBUG   PLTR CSP candidate: $110 2026-08-14 DTE=34 Δ=0.196 RoC=24.9% score=5.6
+2026-07-12 00:05:03,533 [options.screener] DEBUG   PLTR CSP candidate: $114 2026-08-14 DTE=34 Δ=0.245 RoC=25.9% score=7.6
+2026-07-12 00:05:03,533 [options.screener] DEBUG   PLTR CSP candidate: $105 2026-08-21 DTE=41 Δ=0.155 RoC=19.6% score=5.1
+2026-07-12 00:05:03,533 [options.screener] DEBUG   PLTR CSP candidate: $110 2026-08-21 DTE=41 Δ=0.210 RoC=27.5% score=4.1
+2026-07-12 00:05:03,533 [options.screener] DEBUG   PLTR CSP candidate: $105 2026-09-18 DTE=69 Δ=0.188 RoC=18.6% score=6.6
+2026-07-12 00:05:03,534 [options.screener] DEBUG   PLTR CSP candidate: $110 2026-09-18 DTE=69 Δ=0.239 RoC=24.3% score=5.6
+2026-07-12 00:05:03,534 [options.screener] DEBUG   META: price=$669.21, spread=0.0%, rsi=0
+2026-07-12 00:05:10,954 [options.screener] DEBUG   META: 0 option contracts fetched
+2026-07-12 00:05:10,956 [options.screener] DEBUG   META: SKIP — no option contracts
+2026-07-12 00:05:10,956 [options.screener] DEBUG   AVGO: price=$399.97, spread=0.0%, rsi=0
+2026-07-12 00:05:18,513 [options.screener] DEBUG   AVGO: 0 option contracts fetched
+2026-07-12 00:05:18,515 [options.screener] DEBUG   AVGO: SKIP — no option contracts
+2026-07-12 00:05:18,515 [options.screener] DEBUG   GOOG: price=$355.03, spread=0.0%, rsi=0
+2026-07-12 00:05:24,262 [options.screener] DEBUG   GOOG: 802 option contracts fetched
+2026-07-12 00:05:24,518 [options.screener] DEBUG   GOOG CSP candidate: $330 2026-07-24 DTE=13 Δ=0.190 RoC=27.7% score=8.0
+2026-07-12 00:05:24,519 [options.screener] DEBUG   GOOG CSP candidate: $332 2026-07-24 DTE=13 Δ=0.213 RoC=31.7% score=10.2
+2026-07-12 00:05:24,519 [options.screener] DEBUG   GOOG CSP candidate: $335 2026-07-24 DTE=13 Δ=0.237 RoC=36.5% score=7.2
+2026-07-12 00:05:24,519 [options.screener] DEBUG   GOOG CSP candidate: $325 2026-07-31 DTE=20 Δ=0.173 RoC=18.8% score=7.0
+2026-07-12 00:05:24,519 [options.screener] DEBUG   GOOG CSP candidate: $330 2026-07-31 DTE=20 Δ=0.213 RoC=24.1% score=7.0
+2026-07-12 00:05:24,520 [options.screener] DEBUG   GOOG CSP candidate: $325 2026-08-07 DTE=27 Δ=0.188 RoC=16.0% score=8.0
+2026-07-12 00:05:24,520 [options.screener] DEBUG   GOOG CSP candidate: $330 2026-08-07 DTE=27 Δ=0.230 RoC=21.7% score=7.0
+2026-07-12 00:05:24,520 [options.screener] DEBUG   GOOG CSP candidate: $330 2026-08-14 DTE=34 Δ=0.242 RoC=18.2% score=7.0
+2026-07-12 00:05:24,520 [options.screener] DEBUG   GOOG CSP candidate: $325 2026-08-21 DTE=41 Δ=0.213 RoC=14.4% score=4.5
+2026-07-12 00:05:24,521 [options.screener] DEBUG   COST: price=$916.25, spread=0.1%, rsi=0
+2026-07-12 00:05:28,773 [options.screener] DEBUG   COST: 1402 option contracts fetched
+2026-07-12 00:05:29,030 [options.screener] DEBUG   COST CSP candidate: $890 2026-07-24 DTE=13 Δ=0.235 RoC=14.7% score=9.1
+2026-07-12 00:06:33,309 [options.screener] INFO SCAN START: 26 tickers, regime=CAUTIOUS, vix=15.03
+2026-07-12 00:07:54,082 [options.screener] INFO SCAN START: 26 tickers, regime=CAUTIOUS, vix=15.03
+2026-07-12 00:08:50,727 [options.screener] INFO SCAN START: 26 tickers, regime=NEUTRAL, vix=20.0
+2026-07-12 00:08:50,979 [options.screener] DEBUG   TSLA: price=$407.76, spread=0.0%, rsi=0
+2026-07-12 00:08:53,064 [options.screener] DEBUG   TSLA: 2174 option contracts fetched
+2026-07-12 00:08:53,323 [options.screener] DEBUG   INTC: price=$109.84, spread=0.0%, rsi=0
+2026-07-12 00:08:54,851 [options.screener] DEBUG   INTC: 1398 option contracts fetched
+2026-07-12 00:08:55,109 [options.screener] DEBUG   KO: price=$83.49, spread=0.1%, rsi=0
+2026-07-12 00:08:56,150 [options.screener] DEBUG   KO: 430 option contracts fetched
+2026-07-12 00:08:56,406 [options.screener] DEBUG   SNDK: price=$1915.92, spread=0.1%, rsi=0
+2026-07-12 00:09:01,742 [options.screener] DEBUG   SNDK: 2940 option contracts fetched
+2026-07-12 00:09:02,004 [options.screener] DEBUG   SKHYV: price=$168.01, spread=0.1%, rsi=0
+2026-07-12 00:09:08,166 [options.screener] DEBUG   SKHYV: 0 option contracts fetched
+2026-07-12 00:09:08,167 [options.screener] DEBUG   SKHYV: SKIP — no option contracts
+2026-07-12 00:09:08,167 [options.screener] DEBUG   SKHY: price=$149.00, spread=0.0%, rsi=0
+2026-07-12 00:09:14,325 [options.screener] DEBUG   SKHY: 0 option contracts fetched
+2026-07-12 00:09:14,325 [options.screener] DEBUG   SKHY: SKIP — no option contracts
+2026-07-12 00:09:14,326 [options.screener] DEBUG   MU: price=$979.30, spread=0.0%, rsi=0
+2026-07-12 00:09:20,476 [options.screener] DEBUG   MU: 0 option contracts fetched
+2026-07-12 00:09:20,477 [options.screener] DEBUG   MU: SKIP — no option contracts
+2026-07-12 00:09:20,477 [options.screener] DEBUG   NBIS: price=$219.65, spread=0.2%, rsi=0
+2026-07-12 00:09:23,283 [options.screener] DEBUG   NBIS: 902 option contracts fetched
+2026-07-12 00:09:23,541 [options.screener] DEBUG   BE: price=$244.61, spread=0.1%, rsi=0
+2026-07-12 00:09:24,911 [options.screener] DEBUG   BE: 1082 option contracts fetched
+2026-07-12 00:09:25,169 [options.screener] DEBUG   MRVL: price=$235.81, spread=0.1%, rsi=0
+2026-07-12 00:09:27,614 [options.screener] DEBUG   MRVL: 992 option contracts fetched
+2026-07-12 00:09:27,872 [options.screener] DEBUG   MSFT: price=$385.10, spread=0.0%, rsi=0
+2026-07-12 00:09:32,318 [options.screener] DEBUG   MSFT: 858 option contracts fetched
+2026-07-12 00:09:32,576 [options.screener] DEBUG   SPCX: price=$145.30, spread=0.0%, rsi=0
