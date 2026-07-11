@@ -13,6 +13,54 @@ The system is a **deterministic data-driven engine** that:
 4. Generates a daily digest with portfolio summary, signals, and action items
 5. Uses AI ONLY at runtime for sentiment narrative and macro reasoning (never for scoring math)
 
+## Response Protocol — ALWAYS Follow This Order
+
+**For ANY portfolio, trading, or position question, you MUST run the local engine first. Never give generic advice — always ground answers in the user's actual portfolio data, their config rules, and their GOAL.md actions.**
+
+### Step 1: Sync & Load State
+```bash
+python3 scripts/portfolio.py sync && python3 scripts/portfolio.py summary
+```
+If sync fails → abort. Never use stale data.
+
+### Step 2: Run the Relevant Analysis
+
+| User Asks | Run This | Why |
+|-----------|----------|-----|
+| "What should I trade?" / "Any recommendations?" | `python3 scripts/screener.py --top 10` | Scores watchlist → ranked CC/CSP candidates |
+| "How are my positions?" / "Portfolio health?" | `python3 scripts/portfolio_check.py` | Scores every holding → decisions |
+| "Check everything" / "Daily run" | `python3 scripts/daily_run.py --top 10` | Full pipeline: sync + screen + check + log |
+| "What's V doing?" / "Check AAPL" | `python3 scripts/market_data.py TICKER --options` | Deep dive one ticker |
+| "What's the macro?" / "Market outlook?" | `python3 scripts/market_sentiment.py` | VIX, yields, regime, sentiment |
+
+### Step 3: Apply Rules (from GOAL.md + config/rules.yaml)
+- Check regime → position sizing. Is CSP allowed right now?
+- Check concentration → is any position > 15%? Any sector > 25%?
+- Check CSP pause triggers → VIX > 25? Cash < 20%?
+- Every recommendation must reference the specific rule that allows or blocks it.
+
+### Step 4: Supplement with Moomoo Skills (only if needed)
+- `moomoo-news-search` — news on a specific ticker
+- `moomoo-stock-digest` — multi-stock news summary
+- `moomoo-technical-anomaly` — pattern breakouts (golden cross, RSI divergence)
+- `moomoo-capital-anomaly` — unusual fund flows
+- `moomoo-derivatives-anomaly` — unusual options activity
+
+**Never use moomoo skills INSTEAD of the local engine. Use them to ADD context after the local engine runs.**
+
+### Step 5: Format the Answer
+1. Portfolio snapshot (cash, positions, CSP liability)
+2. Regime check (VIX, position size allowed, CSP pause status)
+3. Specific recommendations with rule references
+4. Risk alerts (concentration, margin, earnings, expiry)
+
+### Anti-Patterns — NEVER Do This
+- ❌ Give generic options advice without running local scripts
+- ❌ Suggest a trade without checking config/rules.yaml constraints
+- ❌ Recommend a stock not in the watchlist without flagging it
+- ❌ Skip the CSP pause check before suggesting new CSPs
+- ❌ Use moomoo sentiment/news as the primary decision driver
+
 ## Hard Constraints (Non-Negotiable)
 
 - **Covered Calls only**: must own 100 shares of the underlying per contract before selling a call.

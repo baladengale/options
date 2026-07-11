@@ -123,29 +123,29 @@ class GuardrailChecker:
         r.margin_used_pct = self._margin / self._net_liq * 100 if self._net_liq > 0 else 0
 
         # ── Cash buffer ──
-        if r.cash_buffer_pct < self.MIN_CASH_BUFFER_CRITICAL * 100:
+        if r.cash_buffer_pct < self.MIN_CASH_BUFFER_CRITICAL() * 100:
             r.blocks.append(
-                f"Cash buffer {r.cash_buffer_pct:.1f}% < {self.MIN_CASH_BUFFER_CRITICAL*100:.0f}% critical. "
-                f"Keep ≥{self.MIN_CASH_BUFFER_WARN*100:.0f}% cash. Close positions or add funds.")
-        elif r.cash_buffer_pct < self.MIN_CASH_BUFFER_WARN * 100:
+                f"Cash buffer {r.cash_buffer_pct:.1f}% < {self.MIN_CASH_BUFFER_CRITICAL()*100:.0f}% critical. "
+                f"Keep ≥{self.MIN_CASH_BUFFER_WARN()*100:.0f}% cash. Close positions or add funds.")
+        elif r.cash_buffer_pct < self.MIN_CASH_BUFFER_WARN() * 100:
             r.warnings.append(
-                f"Cash buffer {r.cash_buffer_pct:.1f}% < {self.MIN_CASH_BUFFER_WARN*100:.0f}% recommended. "
+                f"Cash buffer {r.cash_buffer_pct:.1f}% < {self.MIN_CASH_BUFFER_WARN()*100:.0f}% recommended. "
                 f"Consider reducing position sizes.")
 
         # ── Margin ──
-        if r.margin_used_pct > self.MAX_MARGIN_PCT * 100:
-            r.warnings.append(f"Margin {r.margin_used_pct:.1f}% > {self.MAX_MARGIN_PCT*100:.0f}% limit.")
+        if r.margin_used_pct > self.MAX_MARGIN_PCT() * 100:
+            r.warnings.append(f"Margin {r.margin_used_pct:.1f}% > {self.MAX_MARGIN_PCT()*100:.0f}% limit.")
 
         # ── Position count ──
         r.open_positions = len(self._positions)
-        if r.open_positions > self.MAX_OPEN_POSITIONS:
-            r.warnings.append(f"{r.open_positions} open positions > {self.MAX_OPEN_POSITIONS} max. "
+        if r.open_positions > self.MAX_OPEN_POSITIONS():
+            r.warnings.append(f"{r.open_positions} open positions > {self.MAX_OPEN_POSITIONS()} max. "
                               f"Management bandwidth exceeded. Close before opening new.")
 
         # ── Daily orders ──
-        r.recommended_max_new = max(0, self.MAX_DAILY_ORDERS - self._daily_orders)
-        if self._daily_orders >= self.MAX_DAILY_ORDERS:
-            r.warnings.append(f"Daily order limit ({self.MAX_DAILY_ORDERS}) reached. Wait until tomorrow.")
+        r.recommended_max_new = max(0, self.MAX_DAILY_ORDERS() - self._daily_orders)
+        if self._daily_orders >= self.MAX_DAILY_ORDERS():
+            r.warnings.append(f"Daily order limit ({self.MAX_DAILY_ORDERS()}) reached. Wait until tomorrow.")
 
         # ── Single position concentration ──
         for pos in self._positions:
@@ -153,10 +153,10 @@ class GuardrailChecker:
             pct = (notional / self._net_liq * 100) if self._net_liq > 0 else 0
             if pct > r.max_single_position_pct:
                 r.max_single_position_pct = pct
-            if pct > self.MAX_POSITION_PCT * 100:
+            if pct > self.MAX_POSITION_PCT() * 100:
                 r.blocks.append(
                     f"{pos.get('ticker', '??')} at {pct:.1f}% of portfolio "
-                    f"> {self.MAX_POSITION_PCT*100:.0f}% limit. Reduce size.")
+                    f"> {self.MAX_POSITION_PCT()*100:.0f}% limit. Reduce size.")
 
         # ── Sector concentration ──
         sectors = {}
@@ -167,8 +167,8 @@ class GuardrailChecker:
             pct = val / self._net_liq * 100 if self._net_liq > 0 else 0
             if pct > r.max_sector_pct:
                 r.max_sector_pct = pct
-            if pct > self.MAX_SECTOR_PCT * 100:
-                r.warnings.append(f"{sec} sector at {pct:.1f}% > {self.MAX_SECTOR_PCT*100:.0f}% limit.")
+            if pct > self.MAX_SECTOR_PCT() * 100:
+                r.warnings.append(f"{sec} sector at {pct:.1f}% > {self.MAX_SECTOR_PCT()*100:.0f}% limit.")
 
         # ── Worst-case assignment stress test ──
         csp_total = sum(p.get('csp_liability', 0) for p in self._positions
