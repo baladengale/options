@@ -56,14 +56,34 @@ def cmd_history(days: int = 30):
         if not rows:
             print("No history yet. Run a sync first.")
             return
-        print(f"📈 FUND HISTORY ({len(rows)} days)")
-        print(f"  {'Date':<12s} {'Total':>14s} {'Cash':>14s} {'Stocks':>14s}")
-        print(f"  {'-'*12} {'-'*14} {'-'*14} {'-'*14}")
+
+        # Deduplicate: keep only the latest snapshot per day
+        # Also filter out old HKD-denominated rows (> $10M = clearly wrong currency)
+        by_date = {}
         for r in rows:
+            day = r['synced_at'][:10]
+            total = r['total_assets'] or 0
+            # Skip HKD rows (> $500K = clearly not USD for this portfolio)
+            if total > 500_000:
+                continue
+            if day not in by_date or r['synced_at'] > by_date[day]['synced_at']:
+                by_date[day] = r
+
+        clean = sorted(by_date.values(), key=lambda r: r['synced_at'])
+
+        print(f"📈 FUND HISTORY ({len(clean)} days, USD)")
+        print(f"  {'Date':<12s} {'Total':>14s} {'Cash':>14s} {'Stocks':>14s} {'Fund':>14s}")
+        print(f"  {'-'*12} {'-'*14} {'-'*14} {'-'*14} {'-'*14}")
+        for r in clean:
+            total = r['total_assets'] or 0
+            cash = r['cash'] or 0
+            stocks = r['stock_value'] or 0
+            fund_est = total - cash - stocks  # fund is the remainder
             print(f"  {r['synced_at'][:10]:<12s} "
-                  f"${r['total_assets'] or 0:>13,.2f} "
-                  f"${r['cash'] or 0:>13,.2f} "
-                  f"${r['stock_value'] or 0:>13,.2f}")
+                  f"${total:>13,.2f} "
+                  f"${cash:>13,.2f} "
+                  f"${stocks:>13,.2f} "
+                  f"${fund_est:>13,.2f}")
     finally:
         db.close()
 

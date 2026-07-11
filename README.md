@@ -523,41 +523,46 @@ Polls REAL moomoo account (`accinfo_query`, `position_list_query`, `order_list_q
 2. **Capital preservation first** — earn premium, let stocks assign if needed
 3. **Never trade purely on premium** — screen strike, expiry, macro, and technicals first
 4. **30% margin max**, hard 15-day window to clear
-5. **One trade at a time** — analyze margin and position status before each trade
-6. **Document every position** — DB tracks everything automatically
+5. **Document every position** — DB tracks everything automatically
+
+Full rules in [GOAL.md](GOAL.md) Actions. **Always reference GOAL.md before making trade recommendations.**
 
 ## Decision Framework
 
-### Layer 1: Macro Regime Gate
+### Layer 1: Macro Regime Gate → Position Sizing
 
-5-condition voting (VIX + yield curve + credit + DXY + VVIX) → position sizing multiplier.
+5-condition voting (VIX + yield curve + credit + DXY + VVIX) determines regime, position size, and delta.
 
-| Regime Score | Position Size | Label |
-|-------------|---------------|-------|
-| +3 to +5 | 100% | BULLISH — full size |
-| +1 to +2 | 75% | NEUTRAL — normal |
-| -1 to +1 | 50% | CAUTIOUS — reduced |
-| -2 to -3 | 25% | VOLATILE — minimal |
-| -4 to -5 | 0% | BEARISH — no new positions |
+| Regime | VIX | Size | Cash Reserve | CSP Delta | CC Delta | CSP:CC Ratio |
+|--------|-----|:---:|:---:|:---:|:---:|:---:|
+| BULLISH | < 15 | 100% | ≥ 15% | 0.20-0.30 | 0.20-0.30 | 60:40 |
+| NEUTRAL | 15-20 | 75% | ≥ 20% | 0.20-0.30 | 0.20-0.30 | 50:50 |
+| CAUTIOUS | 20-25 | 50% | ≥ 25% | 0.15-0.25 | 0.25-0.35 | 30:70 |
+| VOLATILE | 25-30 | 25% | ≥ 30% | 0.10-0.20 | 0.30-0.40 | 10:90 |
+| BEARISH | > 30 | 0% | ≥ 35% | NONE | existing only | 0:100 |
 
-### Layer 2: Ticker Risk Gates
+### CSP Pause Triggers (stop new CSPs immediately if ANY true)
 
-14 hard constraints. Any single failure → trade blocked. Plus:
+- VIX > 25 | SPY < 200 SMA | Regime ≤ -2 | Cash reserve < 20% | Stock > 15% below cost basis
 
-| Gate | Rule | Blocks |
-|------|------|--------|
-| VRP Gate | IV must exceed 80% of historical vol | CSP + CC |
-| GEX Gate | GEX must be > -$500K | CSP only |
-| Concentration | Single position ≤ 8% of net liq | CSP only |
-| Earnings | No earnings inside DTE window | CSP + CC |
+### Layer 2: Position Limits
 
-### Layer 3: 1-10 Trade Scoring
+| Rule | Limit | Type |
+|------|-------|------|
+| Single stock | ≤ 15% of net liq | 🔴 BLOCK |
+| Sector concentration | ≤ 25% of portfolio | 🟡 WARN |
+| CSP capital deployed | ≤ 25% of net liq (≤ 10% volatile) | 🔴 BLOCK |
+| Cash reserve | Per regime table | 🔴 BLOCK |
+| Open positions | ≤ 8 total | 🟡 WARN |
+| Watchlist diversification | ≥ 3 sectors | 🟡 WARN |
 
-5 dimensions → ticker score. Contract penalty added. Final rank = ticker_score + contract_penalty.
+### Layer 3: Ticker Risk Gates + Scoring
+
+14 hard constraints + VRP, GEX, concentration, earnings gates. 5-dimension ticker score + contract penalty. See [GOAL.md](GOAL.md) for pre-trade checklist.
 
 ### T-21 Management
 
-At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE. If rolling stops paying → take assignment or close. Close at 50% profit regardless of DTE.
+At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE. Close at 50% profit regardless of DTE. Never sell CC below cost basis.
 
 ---
 

@@ -41,8 +41,10 @@ from src.analysis.sentiment import (
     get_macro_context, get_ticker_sentiment, get_watchlist_sentiment,
     score_analyst_consensus, score_news_sentiment, score_earnings_blackout,
 )
+from src.config import get_config
 
 _iv_tracker: Optional['IVHistoryTracker'] = None
+_cfg = None  # lazy-loaded config
 
 
 def _get_iv_tracker() -> Optional['IVHistoryTracker']:
@@ -61,7 +63,12 @@ _DEFAULT_WATCHLIST = [
     'US.NVDA', 'US.META', 'US.AVGO', 'US.ADBE', 'US.CRM', 'US.AMD',
 ]
 
-MAX_MARGIN_PCT = 30.0
+def _cfg_val(getter, default=None):
+    """Lazy config access — loads once, cached."""
+    global _cfg
+    if _cfg is None:
+        _cfg = get_config()
+    return getter(_cfg) if default is None else getter(_cfg)
 
 
 def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max: int = 90) -> list:
@@ -343,7 +350,9 @@ def main():
             )
 
             # ── OPTION CHAIN (with retry + yfinance fallback) ──
-            contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=7, dte_max=90)
+            dte_min = _cfg_val(lambda c: c.dte_screen_min)
+            dte_max = _cfg_val(lambda c: c.dte_screen_max)
+            contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=dte_min, dte_max=dte_max)
             if not contracts:
                 continue
             time.sleep(1.5)  # rate limit: pause between tickers
@@ -366,9 +375,10 @@ def main():
                 if not args.cc_only and c.option_type == 'PUT':
                     if c.bid <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
                         continue
-                    # CSP: Δ 0.05-0.30, rejects deep ITM (Δ>0.70 = synthetic stock)
+                    # CSP delta check from config (regime-adjusted)
                     abs_d = abs(c.delta or 0)
-                    if abs_d < 0.05 or abs_d > 0.30:
+                    delta_range = _cfg_val(lambda c: c.delta_range('csp', regime))
+                    if abs_d < delta_range[0] or abs_d > delta_range[1]:
                         continue
                     if abs_d > 0.70:
                         continue  # deep ITM, not premium selling
@@ -380,7 +390,7 @@ def main():
                     if gex_negative:
                         continue  # GEX gate: skip CSP in negative GEX regime
                     roc = _csp_roc(c.bid, c.strike, c.dte)
-                    if roc < 12.0:
+                    if roc < _cfg_val(lambda c: c.roc_min_csp):
                         continue
                     capital = c.strike * 100
 
@@ -388,7 +398,7 @@ def main():
                     total_nlv = sum(PORTFOLIO.get(t, 0) * snap.last_price
                                     for t, snap2 in [(short, snap)]
                                     if snap2.last_price) + CASH + FUND
-                    if capital > total_nlv * 0.15:
+                    if capital > total_nlv * _cfg_val(lambda c: c.max_single_position_pct):
                         continue
 
                     # ── CASH BUFFER GATE: include fund assets, block if < 10% ──
@@ -418,7 +428,9 @@ def main():
                 if not args.csp_only and c.option_type == 'CALL' and has_shares:
                     if c.bid <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
                         continue
-                    if c.delta < 0.15 or c.delta > 0.35:  # CC: delta 0.20-0.30
+                    # CC delta check from config (regime-adjusted)
+                    cc_delta_range = _cfg_val(lambda c: c.delta_range('cc', regime))
+                    if c.delta < cc_delta_range[0] or c.delta > cc_delta_range[1]:
                         continue
                     if not iv_sane:
                         continue  # IV sanity
@@ -426,7 +438,7 @@ def main():
                         continue  # VRP gate
                     cost_basis = snap.last_price
                     roc = (c.bid / cost_basis) * (365.0 / c.dte) * 100 if cost_basis > 0 else 0
-                    if roc < 8.0:
+                    if roc < _cfg_val(lambda c: c.roc_min_cc):
                         continue
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
                     candidates.append(TradeCandidate(
@@ -523,25 +535,27 @@ def _compute_ticker_score(
     """
     scores = {}
 
-    # 1. TECHNICAL (25%) — trend quality for premium selling
+    w = _cfg_val(lambda c: c.scoring_weights)
+
+    # 1. TECHNICAL — trend quality for premium selling
     tech = _score_technical(snap, trend_composite)
-    scores['tech'] = tech * 0.25
+    scores['tech'] = tech * w['technical']
 
-    # 2. OPTIONS ECOSYSTEM (25%) — spread + IV rank
+    # 2. OPTIONS ECOSYSTEM — spread + IV rank
     opt_eco = _score_options_eco(snap, iv_rank)
-    scores['opt_eco'] = opt_eco * 0.25
+    scores['opt_eco'] = opt_eco * w['options_quality']
 
-    # 3. FUNDAMENTAL (15%) — valuation health
+    # 3. FUNDAMENTAL — valuation health
     fund = _score_fundamental(snap)
-    scores['fund'] = fund * 0.15
+    scores['fund'] = fund * w['fundamental']
 
-    # 4. EXTERNAL SENTIMENT (20%) — analyst + earnings + insider + news
+    # 4. EXTERNAL SENTIMENT — analyst + earnings + insider + news
     ext = _score_external(analyst_consensus, earnings_blackout, insider_sentiment, target_upside, news_score)
-    scores['ext'] = ext * 0.20
+    scores['ext'] = ext * w['external_sentiment']
 
-    # 5. MACRO/RISK (15%) — VIX regime + VRP adjustment
+    # 5. MACRO/RISK — VIX regime + VRP adjustment
     macro = _score_macro(regime, regime_mult, earnings_blackout)
-    scores['macro'] = macro * 0.15
+    scores['macro'] = macro * w['macro_risk']
 
     return round(sum(scores.values()), 2)
 
@@ -703,40 +717,60 @@ def _trend_composite(snap: StockSnapshot) -> float:
 
 
 def _contract_penalty(c: OptionSnapshot, delta: float, roc: float) -> float:
-    """Per-contract score adjustment (added to ticker score). Lower = better."""
+    """Per-contract score adjustment (added to ticker score). Lower = better.
+    All thresholds from config/rules.yaml."""
     penalty = 0.0
+    cp = lambda key: _cfg_val(lambda cfg: cfg.contract_penalty(key))
 
-    # ═══ DTE WINDOW (most important factor after fundamentals) ═══
-    if c.dte < 7:                   penalty += 99.0   # HARD BLOCK — gamma explosion
-    elif c.dte < 14:                penalty += 3.0    # extreme gamma, need active mgmt
-    elif c.dte < 21:                penalty += 1.5    # weekly — higher gamma
-    elif c.dte < 30:                penalty += 0.5    # acceptable but not ideal
-    elif 30 <= c.dte <= 45:         penalty -= 0.5    # SWEET SPOT — best theta/gamma
-    elif c.dte <= 60:               penalty += 0.0    # neutral — slower theta
-    else:                           penalty += 1.0    # too slow, capital tied up
+    # ═══ DTE WINDOW ═══
+    if c.dte < _cfg_val(lambda cfg: cfg.dte_hard_block):
+        penalty += cp('dte_hard_block')
+    elif c.dte < 14:
+        penalty += cp('dte_weekly_penalty')
+    elif c.dte < _cfg_val(lambda cfg: cfg.dte_penalty_start):
+        penalty += cp('dte_short_penalty')
+    elif c.dte < _cfg_val(lambda cfg: cfg.dte_optimal_min):
+        penalty += 0.5
+    elif c.dte <= _cfg_val(lambda cfg: cfg.dte_optimal_max):
+        penalty += cp('dte_optimal_bonus')
+    elif c.dte <= 60:
+        penalty += 0.0
+    else:
+        penalty += cp('dte_long_penalty')
 
-    # Low OI → risky
-    if c.open_interest < 100:       penalty += 1.5
-    elif c.open_interest < 500:     penalty += 0.5
+    # Low OI
+    if c.open_interest < 100:
+        penalty += cp('low_oi_penalty')
+    elif c.open_interest < _cfg_val(lambda cfg: cfg.oi_min):
+        penalty += cp('medium_oi_penalty')
 
-    # Wide spread → costly
-    if c.bid_ask_spread_pct > 5:    penalty += 2.0
-    elif c.bid_ask_spread_pct > 2:  penalty += 1.0
+    # Wide spread
+    if c.bid_ask_spread_pct > 5:
+        penalty += cp('wide_spread_penalty')
+    elif c.bid_ask_spread_pct > 2:
+        penalty += cp('medium_spread_penalty')
 
     # Delta extreme
-    if delta < 0.15:                penalty += 0.5
+    if delta < 0.15:
+        penalty += cp('low_delta_penalty')
 
     # Reward high RoC
-    if roc > 24:                    penalty -= 1.5
-    elif roc > 18:                  penalty -= 0.8
-    elif roc > 15:                  penalty -= 0.3
+    if roc > 24:
+        penalty += cp('high_roc_bonus')
+    elif roc > 18:
+        penalty += cp('medium_roc_bonus')
+    elif roc > 15:
+        penalty -= 0.3
 
     # Reward high IV
-    if c.implied_vol > 35:          penalty -= 0.5
+    if c.implied_vol > 35:
+        penalty += cp('high_iv_bonus')
 
-    # Low volume → illiquid
-    if c.volume < 50:               penalty += 1.0
-    elif c.volume < 10:             penalty += 2.0
+    # Low volume
+    if c.volume < 50:
+        penalty += cp('low_volume_penalty')
+    elif c.volume < _cfg_val(lambda cfg: cfg.volume_min):
+        penalty += 2.0
 
     return penalty
 

@@ -187,16 +187,18 @@ class PortfolioDB:
     def log_trade(self, ticker: str, action: str, strategy: str = None,
                   strike: float = None, expiry: str = None, dte: int = None,
                   contracts: int = 1, entry_price: float = 0,
+                  entry_date: str = None,
                   notes: str = '') -> int:
         """Log a local trade decision. Returns row id."""
         now = datetime.now().isoformat()
+        trade_date = entry_date or now
         cur = self._conn.execute("""
             INSERT INTO local_trades
             (ticker, action, strategy, strike, expiry, dte, contracts,
              entry_price, entry_date, status, notes, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
         """, (ticker, action, strategy, strike, expiry, dte, contracts,
-              entry_price, now, notes, now))
+              entry_price, trade_date, notes, now))
         self._conn.commit()
         return cur.lastrowid
 

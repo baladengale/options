@@ -60,15 +60,43 @@ class GuardrailChecker:
         - Single sector > 25%
     """
 
-    # ── Limits ──
-    MAX_POSITION_PCT = 0.15          # 15% max per underlying
-    MAX_SECTOR_PCT = 0.25            # 25% max per sector
-    MIN_CASH_BUFFER_WARN = 0.25      # 25% cash unallocated (warn)
-    MIN_CASH_BUFFER_CRITICAL = 0.10  # 10% cash (block)
-    MAX_OPEN_POSITIONS = 8           # Wheel positions (CC + CSP)
-    MAX_DAILY_ORDERS = 2             # New trades per day
-    MAX_MARGIN_PCT = 0.30            # 30% margin utilization
-    CSP_CAPITAL_COVERAGE = 1.0       # Must cover 100% of CSP liability
+    # ── Limits (loaded from config/rules.yaml) ──
+    @classmethod
+    def _cfg(cls):
+        from src.config import get_config
+        return get_config()
+
+    @classmethod
+    def MAX_POSITION_PCT(cls):
+        return cls._cfg().max_single_position_pct
+
+    @classmethod
+    def MAX_SECTOR_PCT(cls):
+        return cls._cfg().max_sector_pct
+
+    @classmethod
+    def MIN_CASH_BUFFER_WARN(cls):
+        return 0.25  # baseline, overridden per regime
+
+    @classmethod
+    def MIN_CASH_BUFFER_CRITICAL(cls):
+        return 0.10
+
+    @classmethod
+    def MAX_OPEN_POSITIONS(cls):
+        return cls._cfg().max_open_positions
+
+    @classmethod
+    def MAX_DAILY_ORDERS(cls):
+        return cls._cfg().max_daily_new_positions
+
+    @classmethod
+    def MAX_MARGIN_PCT(cls):
+        return cls._cfg().max_margin_pct
+
+    @classmethod
+    def CSP_CAPITAL_COVERAGE(cls):
+        return 1.0  # Must cover 100% of CSP liability
 
     def __init__(self, net_liq: float, cash: float, buying_power: float,
                  margin_used: float = 0.0,

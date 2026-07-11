@@ -31,18 +31,38 @@ The system is a **deterministic data-driven engine** that:
 
 ## High-Level Goal
 
-**Diversify out of concentrated Visa position into other high-quality tech stocks** while generating income through covered calls and cash secured puts. Target allocation is a basket of tech stocks with:
+**Diversify out of concentrated Visa position into other high-quality stocks** while generating income through covered calls and cash secured puts. Target allocation diversified across sectors (tech, financial, healthcare, consumer, energy) with:
 - Strong balance sheets and moats
 - Reasonable valuations (P/E, FCF yield, PEG)
 - Liquid options chains with tight bid-ask spreads
 
 ## Key Metrics for Option Selection
 
-- **Delta**: 0.20–0.30 for covered calls (income tilt) or 0.15–0.25 for CSPs (higher probability OTM).
+- **Delta**: CC 0.20–0.30, CSP 0.15–0.25 (normal regime). See regime-adjusted deltas below.
 - **DTE**: 30–45 days for optimal theta decay.
 - **IV Rank > 30**: sell premium when volatility is elevated relative to its own history.
 - **Annualized return on capital**: target >12% annualized for CSPs, >8% for covered calls.
 - **Earnings blackout**: no new positions 2 weeks before earnings unless explicitly researched.
+
+## CC/CSP Allocation & Regime Rules (from GOAL.md Actions)
+
+**Always reference GOAL.md Actions section before making any trade recommendation.** These rules override any conflicting defaults.
+
+### Capital Allocation by Regime
+
+| Regime | VIX | Position Size | Cash Reserve | CSP Delta | CC Delta |
+|--------|-----|:---:|:---:|:---:|:---:|
+| BULLISH | < 15 | 100% | ≥ 15% | 0.20-0.30 | 0.20-0.30 |
+| NEUTRAL | 15-20 | 75% | ≥ 20% | 0.20-0.30 | 0.20-0.30 |
+| CAUTIOUS | 20-25 | 50% | ≥ 25% | 0.15-0.25 | 0.25-0.35 |
+| VOLATILE | 25-30 | 25% | ≥ 30% | 0.10-0.20 | 0.30-0.40 |
+| BEARISH | > 30 | 0% | ≥ 35% | NONE | existing only |
+
+### CSP Pause Triggers (stop new CSPs if ANY true)
+- VIX > 25 | SPY < 200 SMA | Regime ≤ -2 | Cash reserve < 20% | Stock > 15% below cost basis
+
+### Hard Position Limits
+- Single position ≤ 15% net liq | Sector ≤ 25% | CSP deployed ≤ 25% net liq (≤ 10% volatile) | Open positions ≤ 8
 
 ## Local File-Based Database (SQLite)
 

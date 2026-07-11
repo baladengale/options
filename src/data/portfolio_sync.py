@@ -78,17 +78,18 @@ class PortfolioSync:
         return False
 
     def _find_real_account(self) -> tuple:
-        """Find REAL account ID."""
+        """Find REAL account ID (string-safe comparison)."""
         ret, acc_list = self.ctx.get_acc_list()
         if ret != RET_OK:
             return None, None
         for _, acc in acc_list.iterrows():
-            if acc.get('trd_env') == TrdEnv.REAL:
+            trd_env_raw = str(acc.get('trd_env', ''))
+            if trd_env_raw == 'REAL':
                 return acc['acc_id'], TrdEnv.REAL
         return None, None
 
     def _sync_funds(self, acc_id: int, trd_env) -> bool:
-        """Poll accinfo_query → portfolio_snapshots."""
+        """Poll accinfo_query → portfolio_snapshots. All values stored in USD."""
         try:
             ret, funds = self.ctx.accinfo_query(
                 trd_env=trd_env, acc_id=acc_id, refresh_cache=True
@@ -106,13 +107,28 @@ class PortfolioSync:
                 except (ValueError, TypeError):
                     return default
 
+            currency = str(f.get('currency', 'USD'))
+            is_hkd = (currency == 'HKD')
+            HKD_TO_USD = 7.8  # approximate peg rate
+
+            # USD-specific fields (already in USD, correct for US stocks)
+            usd_assets = nf('usd_assets')        # US stock + option market value
+            us_cash = nf('us_cash')               # USD cash (may be negative for margin)
+            us_bp = nf('usd_net_cash_power')      # USD buying power
+
+            # Fund assets — moomoo reports in account currency, convert if HKD
+            fund_raw = nf('fund_assets')
+            fund_usd = (fund_raw / HKD_TO_USD) if (is_hkd and fund_raw) else fund_raw
+
+            # Total net liquidation in USD = stocks/options + cash + fund
+            total_usd = usd_assets + us_cash + fund_usd
+
             fund_data = {
-                'total_assets': (nf('total_assets')
-                                 or nf('usd_assets', 0) + (nf('us_cash') or nf('cash'))),
-                'cash': nf('us_cash') or nf('cash'),
-                'buying_power': nf('usd_net_cash_power') or nf('power') or nf('net_cash_power'),
-                'stock_value': nf('usd_assets') or nf('securities_assets') or nf('market_val'),
-                'currency': f.get('currency', 'USD'),
+                'total_assets': round(total_usd, 2),
+                'cash': round(us_cash, 2),
+                'buying_power': round(us_bp, 2),
+                'stock_value': round(usd_assets, 2),
+                'currency': 'USD',  # always stored in USD
             }
             self._db.save_funds(acc_id, fund_data)
             return True
@@ -141,6 +157,9 @@ class PortfolioSync:
             for _, p in pos.iterrows():
                 code = str(p.get('code', ''))
                 qty = self._nf(p.get('qty'))
+                # Skip zero-qty (closed/expired but not yet settled)
+                if qty == 0:
+                    continue
                 cost = self._nf(p.get('cost_price'))
                 price = self._nf(p.get('nominal_price'))
 
@@ -259,11 +278,11 @@ class PortfolioSync:
                     except Exception:
                         pass
 
-                # Check if already recorded (by code + date + action + price)
+                # Check if already recorded — entry_date now stores actual trade date
                 existing = self._db._conn.execute(
                     """SELECT id FROM local_trades
                        WHERE ticker=? AND action=? AND entry_date=?
-                       AND entry_price=? AND ABS(strike - ?) < 0.01
+                       AND entry_price=? AND ABS(COALESCE(strike, 0) - ?) < 0.01
                        LIMIT 1""",
                     (ticker, action, order_date, dealt_price, strike or 0)
                 ).fetchone()
@@ -286,11 +305,12 @@ class PortfolioSync:
                         new_count += 1
                         continue
 
-                # Record new trade
+                # Record new trade with actual order date for dedup
                 self._db.log_trade(
                     ticker=ticker, action=action, strategy=strategy,
                     strike=strike, expiry=expiry, dte=dte,
                     contracts=qty, entry_price=dealt_price,
+                    entry_date=order_date,
                     notes=f'Auto-synced from moomoo {order_date}',
                 )
                 new_count += 1

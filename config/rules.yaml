@@ -1,0 +1,157 @@
+# ═══════════════════════════════════════════════════════════════
+# Wheel Strategy Rules — Master Configuration
+# ═══════════════════════════════════════════════════════════════
+# Single source of truth for all parameters. Tweak here, reload.
+# Loaded by: src/config.py → all scripts and scoring engines.
+# ═══════════════════════════════════════════════════════════════
+
+# ── Market Regime Classification ──
+regime:
+  # VIX thresholds
+  vix:
+    low: 15          # below = BULLISH
+    normal: 20       # below = NEUTRAL
+    elevated: 25     # below = CAUTIOUS
+    high: 30         # below = VOLATILE, above = BEARISH
+
+  # Position size multiplier per regime
+  position_mult:
+    BULLISH: 1.0     # full size
+    NEUTRAL: 0.75    # 75% size
+    CAUTIOUS: 0.50   # 50% size
+    VOLATILE: 0.25   # 25% size
+    BEARISH: 0.0     # no new positions
+
+  # Cash reserve minimum (% of net liquidation)
+  cash_reserve_pct:
+    BULLISH: 0.15
+    NEUTRAL: 0.20
+    CAUTIOUS: 0.25
+    VOLATILE: 0.30
+    BEARISH: 0.35
+
+  # CSP-to-CC ratio guidance
+  csp_cc_ratio:
+    BULLISH: [60, 40]
+    NEUTRAL: [50, 50]
+    CAUTIOUS: [30, 70]
+    VOLATILE: [10, 90]
+    BEARISH: [0, 100]
+
+# ── Option Selection Parameters ──
+options:
+  # Delta ranges per strategy and regime
+  delta:
+    csp:
+      BULLISH:     [0.20, 0.30]
+      NEUTRAL:     [0.20, 0.30]
+      CAUTIOUS:    [0.15, 0.25]
+      VOLATILE:    [0.10, 0.20]
+      BEARISH:     [0, 0]           # no CSPs
+    cc:
+      BULLISH:     [0.20, 0.30]
+      NEUTRAL:     [0.20, 0.30]
+      CAUTIOUS:    [0.25, 0.35]
+      VOLATILE:    [0.30, 0.40]
+      BEARISH:     [0.25, 0.35]     # existing positions only
+
+  # DTE ranges
+  dte:
+    screen_min: 7         # minimum DTE to screen
+    screen_max: 90        # maximum DTE to screen
+    optimal_min: 30       # sweet spot minimum
+    optimal_max: 45       # sweet spot maximum
+    penalty_start: 21     # DTE below this gets penalty
+    hard_block: 7         # DTE below this = hard block
+
+  # Return on Capital minimums (%)
+  roc_min:
+    csp: 12.0
+    cc: 8.0
+
+  # IV Rank
+  iv_rank_min: 30
+
+  # Liquidity filters
+  liquidity:
+    open_interest_min: 500
+    volume_min: 10
+    bid_ask_spread_max_pct: 5.0
+
+  # Earnings blackout
+  earnings:
+    blackout_days: 14
+
+# ── Scoring Weights ──
+scoring:
+  weights:
+    technical: 0.25
+    options_quality: 0.25
+    fundamental: 0.15
+    external_sentiment: 0.20
+    macro_risk: 0.15
+
+  # Contract penalty adjustments
+  contract_penalty:
+    dte_optimal_bonus: -0.5      # 30-45 DTE bonus
+    dte_short_penalty: 1.5        # 14-21 DTE penalty
+    dte_weekly_penalty: 3.0       # 7-14 DTE penalty
+    dte_hard_block: 99            # < 7 DTE block
+    dte_long_penalty: 1.0         # > 60 DTE penalty
+    low_oi_penalty: 1.5           # OI < 100
+    medium_oi_penalty: 0.5        # OI < 500
+    wide_spread_penalty: 2.0      # spread > 5%
+    medium_spread_penalty: 1.0    # spread > 2%
+    low_volume_penalty: 1.0       # volume < 50
+    low_delta_penalty: 0.5        # delta < 0.15
+    high_roc_bonus: -1.5          # RoC > 24%
+    medium_roc_bonus: -0.8        # RoC > 18%
+    high_iv_bonus: -0.5           # IV > 35%
+
+# ── Position Sizing Hard Limits ──
+position_limits:
+  max_single_position_pct: 0.15     # 15% max per underlying
+  max_sector_pct: 0.25              # 25% max per sector
+  max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
+  max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
+  max_open_positions: 8             # total stocks + options
+  max_daily_new_positions: 2        # new trades per day
+  max_margin_pct: 0.30              # 30% margin utilization max
+
+# ── CSP Pause Triggers ──
+csp_pause:
+  vix_above: 25
+  spy_below_sma: 200
+  regime_min_score: -2          # VOLATILE or worse
+  cash_reserve_below_pct: 0.20
+  stock_drop_from_basis_pct: 0.15  # per-ticker pause
+
+# ── CC Management ──
+cc_management:
+  never_sell_below_cost_basis: true
+  close_at_profit_pct: 0.50
+  roll_dte_threshold: 21
+  pause_cc_if_drop_pct: 0.25    # stock > 25% below cost basis
+
+# ── Watchlist (default fallback) ──
+watchlist:
+  default:
+    - US.V
+    - US.MSFT
+    - US.GOOGL
+    - US.AAPL
+    - US.AMZN
+    - US.NVDA
+    - US.META
+    - US.AVGO
+    - US.ADBE
+    - US.CRM
+    - US.AMD
+
+  # Non-tech diversification candidates
+  diversify:
+    financial:    [US.JPM, US.BAC, US.GS]
+    healthcare:   [US.ABBV, US.JNJ, US.UNH]
+    consumer:     [US.KO, US.WMT, US.PG]
+    energy:       [US.XOM, US.CVX]
+    industrial:   [US.CAT, US.GE, US.HON]
