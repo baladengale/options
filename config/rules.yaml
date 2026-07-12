@@ -157,7 +157,7 @@ cc_management:
 # ── Watchlist (default fallback) ──
 watchlist:
   # Moomoo watchlist group to pull live tickers from
-  moomoo_group: Options
+  moomoo_group: Monitor
 
   default:
     - US.V

@@ -14,6 +14,9 @@ warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), '..')))
 
 from moomoo import OpenSecTradeContext, TrdEnv, RET_OK
+from src.logging_setup import get_logger
+log = get_logger('portfolio')
+
 from src.data.moomoo_client import MoomooClient
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
@@ -44,6 +47,10 @@ def main():
 
     # ── FETCH PORTFOLIO ──
     stocks, options, cash, bp, fund = _fetch_positions()
+    liquid = cash + fund
+    log.info(f"PORTFOLIO_CHECK|regime={regime}|"
+             f"stocks={len(stocks)}|options={len(options)}|"
+             f"liquid=${liquid:,.0f}|bp=${bp:,.0f}")
     if not stocks and not options:
         print("No positions found.")
         return
@@ -75,6 +82,8 @@ def main():
                 if best_cc:
                     dec = f"SELL CC ${best_cc['strike']:.0f} {best_cc['expiry']} @ {best_cc['roc']:.1f}%"
                     actionable = True
+                    log.info(f"STOCK|{ticker}|qty={qty:.0f}|price=${price:.2f}|cost=${cost:.2f}|"
+                             f"P&L={pl_pct:+.1f}%|score={score:.1f}|CC ${best_cc['strike']:.0f}|{best_cc['expiry']}|RoC={best_cc['roc']:.1f}%")
                 elif qty < 100:
                     dec = "HOLD (<100 shares, can't sell CC)"
                     actionable = False
@@ -173,6 +182,10 @@ def main():
                 delta = abs(current.delta or 0)
                 score, decision = _score_option(pos, current, profit_captured, pl, today, yf_client)
 
+                log.info(f"OPTION|{ticker}|{option_type}|${strike:.0f}|{expiry}|"
+                         f"DTE={dte}|Δ={delta:+.3f}|cost=${cost:.2f}|bid=${bid:.2f}|"
+                         f"P&L={pl:+.0f}|captured={profit_captured:.0f}%|score={score:.1f}|{decision}")
+
                 _print_opt_row(code, qty, dte, current.delta, cost, bid,
                                pl, pl_pct, profit_captured, f"{score:.1f}", decision)
 
@@ -215,10 +228,15 @@ def main():
     else:
         print(f"  ✅ All CSPs covered — ${gr.worst_case_assignment:,.0f} liability")
 
+    log.info(f"GUARDRAILS|NLV=${net_liq:,.0f}|cash_buf={gr.cash_buffer_pct:.0f}%|"
+             f"positions={gr.open_positions}|max_single={gr.max_single_position_pct:.0f}%|"
+             f"blocks={len(gr.blocks)}|warns={len(gr.warnings)}")
     for b in gr.blocks:
         print(f"  🔴 BLOCK: {b}")
+        log.warning(f"BLOCK: {b}")
     for w in gr.warnings:
         print(f"  🟡 WARN: {w}")
+        log.warning(f"WARN: {w}")
     if gr.all_clear and not gr.warnings:
         print(f"  ✅ All within limits")
 

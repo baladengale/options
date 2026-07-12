@@ -368,7 +368,7 @@ def main():
                     contract_score = ticker_score + _contract_penalty(c, abs_d, adj_roc)
                     ticker_candidate_count += 1
                     if contract_score <= 5:  # only log good candidates at INFO
-                        log.info(f"CSP|{short}|${c.strike:.0f}|DTE={c.dte}|Δ={abs_d:.3f}|"
+                        log.info(f"CSP|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={abs_d:.3f}|"
                                  f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
                                  f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
@@ -402,7 +402,7 @@ def main():
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
                     ticker_candidate_count += 1
                     if contract_score <= 5:
-                        log.info(f"CC|{short}|${c.strike:.0f}|DTE={c.dte}|Δ={c.delta:.3f}|"
+                        log.info(f"CC|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={c.delta:.3f}|"
                                  f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
                                  f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
@@ -420,7 +420,7 @@ def main():
                 log.info(f"  {short}: {ticker_candidate_count} candidates passed")
 
     # ── RANK & OUTPUT ──
-    # Dedup: one best per ticker (no strategy split). Skip tickers with existing options.
+    # Dedup: one best per ticker (includes tickers with existing options)
     seen = set()
     deduped = []
     candidates.sort(key=lambda x: x.score)

@@ -501,13 +501,16 @@ class OIEEngine:
                     new_notional = c.capital_required
                     ticker_pct = new_notional / net_liq * 100 if net_liq > 0 else 0
                     if ticker_pct > self.cfg.max_single_position_pct * 100:
-                        events.append(f'🛡️ {c.ticker} {c.strategy} BLOCKED: '
-                                    f'{ticker_pct:.1f}% of NLV > {self.cfg.max_single_position_pct*100:.0f}% limit')
+                        msg = f'{c.ticker} {c.strategy} BLOCKED: {ticker_pct:.1f}% > {self.cfg.max_single_position_pct*100:.0f}% limit'
+                        log.warning(msg)
+                        events.append(f'🛡️ {msg}')
                         continue
 
                     # Cash buffer check for CSP
                     if c.strategy == 'CSP' and c.capital_required > cash * 0.8:
-                        events.append(f'🛡️ {c.ticker} CSP BLOCKED: capital ${c.capital_required:,.0f} > 80% of cash ${cash:,.0f}')
+                        msg = f'{c.ticker} CSP BLOCKED: capital ${c.capital_required:,.0f} > 80% of cash ${cash:,.0f}'
+                        log.warning(msg)
+                        events.append(f'🛡️ {msg}')
                         continue
 
                     # Full guardrail for this specific trade
@@ -670,6 +673,9 @@ class OIEEngine:
             except Exception:
                 pass
 
+        log.info(f"OIE_SCAN|tickers={len(watchlist)}|regime={regime}|"
+                 f"cash=${cash:,.0f}|force={self.force}|dry={self.dry_run}")
+
         # ── OPTIMIZATION 1: Batch all stock snapshots (1 call vs N) ──
         all_snaps = self.moomoo.get_stock_snapshots(watchlist)
         snap_map = {}
@@ -753,6 +759,10 @@ class OIEEngine:
                         continue
 
                     contract_score = ticker_score + _contract_penalty(c, abs_d, roc)
+                    if contract_score <= 5:
+                        log.info(f"CSP|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={abs_d:.3f}|"
+                                 f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
+                                 f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(Candidate(
                         ticker=short, strategy='CSP',
                         score=round(contract_score, 2),
@@ -771,6 +781,10 @@ class OIEEngine:
                         continue
 
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
+                    if contract_score <= 5:
+                        log.info(f"CC|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={c.delta:.3f}|"
+                                 f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
+                                 f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(Candidate(
                         ticker=short, strategy='CC',
                         score=round(contract_score, 2),

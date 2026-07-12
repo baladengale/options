@@ -244,6 +244,11 @@ class Config:
     # ═══════════════════════════════════════════════════════════
 
     @property
+    def moomoo_watchlist_group(self) -> str:
+        """Moomoo watchlist group name to pull live tickers from."""
+        return self._data['watchlist'].get('moomoo_group', 'Options')
+
+    @property
     def default_watchlist(self) -> list:
         return self._data['watchlist']['default']
 
