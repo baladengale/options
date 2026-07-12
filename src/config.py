@@ -46,7 +46,7 @@ class Config:
 
     @property
     def vix_low(self) -> float:
-        return self._data['regime']['vix']['low']
+        return self._data['regime']['vix']['complacent']
 
     @property
     def vix_normal(self) -> float:
@@ -202,6 +202,26 @@ class Config:
     @property
     def csp_pause_stock_drop_pct(self) -> float:
         return self._data['csp_pause']['stock_drop_from_basis_pct']
+
+    # ═══════════════════════════════════════════════════════════
+    # STOP LOSS
+    # ═══════════════════════════════════════════════════════════
+
+    def stop_loss(self, key: str, default=None):
+        """Get stop-loss parameter. e.g., stop_loss('far_close') → 3.0"""
+        val = self._data.get('stop_loss', {}).get('premium_stop', {}).get(key)
+        if val is not None:
+            return val
+        val = self._data.get('stop_loss', {}).get('delta', {}).get(key)
+        return val if val is not None else default
+
+    @property
+    def stop_delta_csp_critical(self) -> float:
+        return self._data['stop_loss']['delta']['csp_critical']
+
+    @property
+    def stop_delta_cc_critical(self) -> float:
+        return self._data['stop_loss']['delta']['cc_critical']
 
     # ═══════════════════════════════════════════════════════════
     # CC MANAGEMENT

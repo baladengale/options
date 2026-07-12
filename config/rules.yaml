@@ -7,12 +7,13 @@
 
 # ── Market Regime Classification ──
 regime:
-  # VIX thresholds
+  # VIX thresholds (aligned with standard VIX interpretation)
+  # Below 12: Extreme complacency | 12-20: Normal/healthy | 20-30: Anxiety/elevated | Above 30: Panic
   vix:
-    low: 15          # below = BULLISH
-    normal: 20       # below = NEUTRAL
-    elevated: 25     # below = CAUTIOUS
-    high: 30         # below = VOLATILE, above = BEARISH
+    complacent: 12   # below = BULLISH (extreme calm, premium is cheap but safe)
+    normal: 20       # below = NEUTRAL (healthy, balanced premium selling)
+    elevated: 25     # below = CAUTIOUS (rising fear, reduce exposure)
+    high: 30         # below = VOLATILE, above = BEARISH (panic, no new positions)
 
   # Position size multiplier per regime
   position_mult:
@@ -43,10 +44,10 @@ options:
   # Delta ranges per strategy and regime
   delta:
     csp:
-      BULLISH:     [0.20, 0.30]
-      NEUTRAL:     [0.20, 0.30]
-      CAUTIOUS:    [0.15, 0.25]
-      VOLATILE:    [0.10, 0.20]
+      BULLISH:     [0.15, 0.30]
+      NEUTRAL:     [0.15, 0.30]
+      CAUTIOUS:    [0.10, 0.25]
+      VOLATILE:    [0.05, 0.20]
       BEARISH:     [0, 0]           # no CSPs
     cc:
       BULLISH:     [0.20, 0.30]
@@ -110,11 +111,11 @@ scoring:
 
 # ── Position Sizing Hard Limits ──
 position_limits:
-  max_single_position_pct: 0.15     # 15% max per underlying
+  max_single_position_pct: 0.75     # 75% max per underlying (temp)
   max_sector_pct: 0.25              # 25% max per sector
   max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
-  max_open_positions: 8             # total stocks + options
+  max_open_positions: 15            # total OPTIONS positions (stocks excluded)
   max_daily_new_positions: 2        # new trades per day
   max_margin_pct: 0.30              # 30% margin utilization max
 
@@ -125,6 +126,26 @@ csp_pause:
   regime_min_score: -2          # VOLATILE or worse
   cash_reserve_below_pct: 0.20
   stock_drop_from_basis_pct: 0.15  # per-ticker pause
+
+# ── Stop Loss (Layered) ──
+stop_loss:
+  # Layer 1: Premium multiple stops, DTE-adjusted
+  # Loss = (current_bid - entry_premium) × qty × 100 for short options
+  premium_stop:
+    far_dte: 30          # > 30 DTE — time to recover
+    mid_dte: 21          # 21-30 DTE — rolling window
+    far_alert: 2.0       # alert at 2× premium lost
+    far_close: 3.0       # close at 3× premium lost
+    mid_alert: 1.0       # alert at 1× premium lost
+    mid_close: 2.0       # close at 2× premium lost, consider rolling
+    near_alert: 0.5      # alert at 0.5× premium lost (< 21 DTE)
+    near_close: 1.5      # close at 1.5× premium lost
+
+  # Layer 2: Delta gates (absolute value)
+  delta:
+    csp_critical: 0.60   # CSP |Δ| > 0.60 → too directional, cut it
+    cc_critical: 0.50    # CC Δ > 0.50 → prepare for assignment
+    cc_warn: 0.40        # CC Δ > 0.40 → monitor closely
 
 # ── CC Management ──
 cc_management:

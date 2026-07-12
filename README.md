@@ -774,21 +774,411 @@ ticker_score = (technical × 0.25) + (options_quality × 0.25)
              + (macro_risk × 0.15)
 
 final_score = ticker_score + contract_penalty
-
-Contract penalties:
-  -0.5  DTE 30-45           bonus for sweet spot
-  +1.5  DTE 14-21           penalty for short duration
-  +99   DTE < 7              hard block — gamma explosion
-  +1.5  OI < 100             low liquidity
-  +2.0  bid-ask > 5%         wide spread
-  -1.5  RoC > 24%            reward high return
 ```
+
+#### Dimension 1: Technical (25% weight)
+
+Evaluates whether the stock's price action supports premium selling. All indicators computed deterministically from OHLCV data — no AI.
+
+| Indicator | What it measures | Scoring logic |
+|-----------|-----------------|---------------|
+| **RSI(14)** | Momentum: overbought vs oversold | 45-55 = best (1.0), 40-60 = good (3.0), <30 or >70 = avoid (9.0) |
+| **SMA Stack** | Trend alignment: price vs SMA50 vs SMA200 | Price > SMA50 > SMA200 = uptrend (1.0), price < SMA200 = downtrend (9.0) |
+| **ADX(14)** | Trend strength (not direction) | >40 = strong trend (1.0), >25 = trending (3.0), <20 = choppy (8.0) |
+| **Volume Ratio** | Today's volume vs 30-day average | >1.0× = liquid (1.0), <0.5× = thin (7.0) |
+
+**RSI (Relative Strength Index):** Momentum oscillator on 0-100 scale. Computed as `100 - (100 / (1 + avg_gain_14d / avg_loss_14d))`.
+- **70+:** Overbought — stock may pull back. Good for selling CC before a drop.
+- **45-55:** Neutral — ideal for premium selling, no directional pressure.
+- **30-:** Oversold — stock may bounce. Good for selling CSP before a rise.
+- Extreme readings (>80 or <20) get the worst scores — premium selling works best in calm markets.
+
+**HV(30d) — Historical Volatility:** How much the stock actually moved over the last 30 days, annualized. Computed as `std(log_returns_30d) × √252`. Not used directly in the ticker score — instead it powers the **VRP Gate** (Volatility Risk Premium):
+
+```
+VRP Gate: IV must > HV(30d) × 0.8
+```
+
+This ensures we only sell premium when options are priced above actual volatility. If implied vol is cheaper than historical vol, the contract is skipped — we're not getting paid enough for the risk.
+
+| Stock | HV(30d) | VRP Threshold | Meaning |
+|-------|---------|---------------|---------|
+| MSFT | 40.1% | IV must > 32.1% | Need IV above 32% to sell |
+| META | 54.6% | IV must > 43.7% | Need higher IV — stock is volatile |
+| MRVL | 142.0% | IV must > 113.6% | Extreme — most options will fail VRP |
+
+**Volume Ratio:** Today's volume ÷ 30-day average volume. From moomoo snapshot directly — no computation needed.
+
+| Ratio | Score | Meaning |
+|-------|-------|---------|
+| >1.0× | **1.0** (liquid) | Above-average activity — easy fills |
+| 0.7-1.0× | **4.0** (normal) | Typical day, acceptable |
+| <0.7× | **7.0** (thin) | Below-average — wider spreads, harder exits |
+
+Volume ratio carries **15% weight** within the Technical dimension. Combined with RSI (35%), Trend (30%), and ADX (20%), it feeds into the technical sub-score.
+
+#### Dimension 2: Options Quality (25% weight)
+
+Measures how tradeable the options chain is.
+
+| Indicator | Good | Bad |
+|-----------|------|-----|
+| **Bid-Ask Spread** | <0.5% = tight (1.0) | >5% = wide (9.0) |
+| **IV Rank** | 30-70 = elevated premium (1.0) | <20 = cheap options (7.0) |
+| **Market Cap** | >$500B = mega-cap liquid (1.0) | <$10B = small cap (8.0) |
+| **Beta vs SPY** | <1.0 = stable (1.0) | >2.0 = volatile (9.0) |
+
+---
+
+### IV (Implied Volatility) — Complete Reference
+
+IV is the market's expectation of future volatility, derived from option prices. It's the single most important input for premium selling — we get paid for taking volatility risk.
+
+**Source:** Moomoo OpenD provides IV directly per option contract (`option_implied_volatility` field). Shown as a percentage (e.g. IV=38% means the market expects ~38% annualized movement).
+
+IV is used in **4 separate places** across the pipeline:
+
+#### 1. IV Sanity Gate (Stage 4)
+
+```
+Rejects: IV ≤ 0  or  IV ≥ 500%
+```
+
+Pure data quality check. Moomoo sometimes returns 0 or absurd values for deep OTM / illiquid contracts. These are skipped immediately.
+
+#### 2. VRP Gate — Volatility Risk Premium (Stage 4)
+
+```
+Condition: IV > HV(30d) × 0.8
+
+Where HV(30d) = actual volatility over last 30 days (annualized)
+```
+
+**What this means:** We only sell options when the market is pricing in MORE volatility than what actually happened. If IV is cheaper than historical vol, we're not getting paid enough for the risk — the contract is skipped.
+
+| Scenario | IV | HV(30d) | VRP Check | Result |
+|----------|----|---------|-----------|--------|
+| IV rich — good to sell | 38% | 25% | 38% > 20% ✓ | **PASS** |
+| IV fairly priced | 30% | 33% | 30% > 26.4% ✓ | **PASS** |
+| IV cheap — avoid | 20% | 35% | 20% > 28% ✗ | **SKIP** |
+
+#### 3. Contract Penalty — High IV Bonus (Stage 5)
+
+```
+If IV > 35%: penalty += -0.5  (bonus — elevated premium)
+```
+
+When IV is elevated (>35%), we get paid more for the same risk. The bonus pulls the final score lower (better), making these contracts rank higher.
+
+| IV Level | Penalty | Meaning |
+|----------|---------|---------|
+| <35% | 0 | Normal — no adjustment |
+| >35% | **-0.5** | Elevated — bonus for selling rich premium |
+
+#### 4. IV Rank — Options Quality Dimension (Stage 3)
+
+```
+IV Rank = where current IV sits in its 1-year range (0-100)
+  IV at 1Y high → IV Rank = 100
+  IV at 1Y low  → IV Rank = 0
+```
+
+Computed by `IVHistoryTracker` which persists daily IV data in `db/options.db`.
+
+| IV Rank | Score | What it means |
+|---------|-------|---------------|
+| **30-70** | 1.0 (best) | IV is in the middle of its range — elevated enough to sell, not panic-level |
+| **20-80** | 3.0 (good) | Slightly outside ideal but acceptable |
+| **>80** | 5.0 | IV is near 1Y highs — good premium but higher risk |
+| **<20** | 7.0 (worst) | IV near 1Y lows — premiums are cheap, not worth selling |
+
+**Why 30-70 is ideal:** At IV Rank 30, IV is above 30% of its historical readings — elevated enough for decent premium. At IV Rank 70, IV is starting to get expensive but not panic-level. Above 80, you're selling into fear (high premium but high risk of getting steamrolled).
+
+#### IV Flow Summary
+
+```
+moomoo returns IV per contract (e.g. 38%)
+        │
+        ├──→ IV Sanity: 0 < 38% < 500% ✓
+        ├──→ VRP Gate:   38% > HV(30d)×0.8 ? → pass/skip
+        ├──→ IV Rank:    where is 38% in 1Y range? → 1.0-7.0 score
+        └──→ IV Bonus:   38% > 35% → -0.5 to contract penalty
+```
+
+#### Dimension 3: Fundamental (15% weight)
+
+| Indicator | Good | Bad |
+|-----------|------|-----|
+| **P/E Ratio (TTM)** | 10-25 = reasonable (1.0) | >60 or negative (8.0) |
+| **Dividend Yield** | >2% = income stock (1.0) | 0% = growth only (6.0) |
+| **EPS (TTM)** | Positive = profitable (1.0) | Negative = unprofitable (7.0) |
+
+#### Dimension 4: External Sentiment (20% weight)
+
+| Input | Source | Effect |
+|-------|--------|--------|
+| **Analyst Consensus** | Yahoo Finance | STRONG_BUY → -1.5 to score, SELL → +3.0 |
+| **Price Target Upside** | Yahoo Finance | >15% upside → -1.0 bonus |
+| **Earnings Blackout** | Yahoo Finance | Within 14 days → +2.0 penalty |
+| **Insider Trading** | Yahoo Finance | Net buying → -1.0, net selling → +1.5 |
+| **News Sentiment** | Yahoo Finance (keyword-based) | >70 bullish → -1.0, <30 bearish → +2.0 |
+
+#### Dimension 5: Macro/Risk (15% weight)
+
+| Regime | VIX | Score | Effect |
+|--------|-----|-------|--------|
+| BULLISH | <15 | 2.0 | Favorable — full size |
+| NEUTRAL | 15-20 | 3.0 | Normal conditions |
+| CAUTIOUS | 20-25 | 4.0 | Reduced size (50%) |
+| VOLATILE | 25-30 | 6.0 | Minimal size (25%) |
+| BEARISH | >30 | 8.0 | No new positions |
+
+#### Contract Penalty (added to ticker score)
+
+Adjusts for contract-specific characteristics. Lower penalty = better contract.
+
+| Factor | Penalty |
+|--------|---------|
+| DTE 30-45 (sweet spot) | **-0.5** bonus |
+| DTE 14-21 (short) | +1.5 penalty |
+| DTE <7 (gamma risk) | **+99** hard block |
+| OI <100 (illiquid) | +1.5 penalty |
+| Bid-Ask >5% (wide) | +2.0 penalty |
+| RoC >24% (high yield) | **-1.5** bonus |
+| IV >35% (elevated) | **-0.5** bonus |
+| Volume <10 | +2.0 penalty |
+
+final_score = ticker_score + contract_penalty
 
 **New candidates score lower (better) because they start fresh** — full theta curve ahead, optimal DTE, no bagged P&L.
 
 ### Why Your Portfolio Shows 4–5 While Screener Shows 1–3
 
 This is **expected and correct.** The screener finds fresh entries at peak conditions (DTE 30-45, good IV, tight spreads). Your existing positions have already decayed — some are winners ready to close, some are neutral holds, one is underwater. The system is telling you: **close the 50%+ winners, free up capital, redeploy into fresh 1–3 score candidates.**
+
+---
+
+## Complete Scoring Pipeline — End to End
+
+Every candidate goes through this 6-stage pipeline. Here's exactly what happens, in order.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ STAGE 1: RAW DATA (moomoo OpenD)                                     │
+│   Stock snapshot → price, spread, volume_ratio, market cap, PE       │
+│   Price history (252d) → OHLCV for RSI, SMA, MACD, ADX, HV, Beta    │
+│   Option chain (7-90 DTE) → strike, expiry, bid/ask, delta, IV, OI  │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│ STAGE 2: COMPUTE INDICATORS (src/data/compute.py)                    │
+│   enrich_stock_snapshot(snap, history, spy_history)                  │
+│                                                                      │
+│   ┌──────────┬─────────────────┬──────────────────────────────┐     │
+│   │ Indicator│ Formula          │ Used in                       │     │
+│   ├──────────┼─────────────────┼──────────────────────────────┤     │
+│   │ RSI(14)  │ Wilder smoothing │ Technical score (35% weight)  │     │
+│   │ SMA 20/  │ Simple moving    │ Trend alignment score         │     │
+│   │ 50/200   │ average          │ (30% weight)                  │     │
+│   │ MACD     │ 12/26/9 EMA      │ Trend composite               │     │
+│   │ ADX(14)  │ +DI/-DI smoothed │ Trend strength (20% weight)   │     │
+│   │ HV(30d)  │ std(log_ret)×√252│ VRP Gate (see Stage 3)        │     │
+│   │ Beta     │ covariance/var   │ Options quality (25% weight)  │     │
+│   │ Bollinger│ 20d SMA ± 2σ     │ Informational only             │     │
+│   └──────────┴─────────────────┴──────────────────────────────┘     │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│ STAGE 3: TICKER SCORE (1-10, lower = better)                        │
+│   _compute_ticker_score(snap, trend_comp, analyst, earnings, ...)   │
+│                                                                      │
+│   Technical (25%):     RSI(35%) + Trend(30%) + ADX(20%) + Vol(15%)  │
+│   Options Eco (25%):   Spread(25%) + IV Rank(25%) + Cap(25%) + β    │
+│   Fundamental (15%):   PE(40%) + Dividend(30%) + EPS(30%)            │
+│   External (20%):      Analyst + Upside + Blackout + Insider + News  │
+│   Macro/Risk (15%):    VIX regime table lookup                       │
+│                                                                      │
+│   → Output: ticker_score (e.g. 3.0 for MSFT, 4.2 for TSLA)          │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│ STAGE 4: CONTRACT FILTERS (hard gates — fail = skip)                 │
+│   For each option contract in the chain:                             │
+│                                                                      │
+│   ┌─────────────────┬──────────────────────┬────────────────────┐    │
+│   │ Gate             │ Condition            │ Fails if           │    │
+│   ├─────────────────┼──────────────────────┼────────────────────┤    │
+│   │ Liquidity        │ bid > 0, OI ≥ 10,    │ Can't enter/exit   │    │
+│   │                  │ Vol ≥ 10             │ at fair price      │    │
+│   │ Delta (CSP)      │ config range per     │ Too aggressive or  │    │
+│   │                  │ regime (e.g. 0.15-   │ too conservative   │    │
+│   │                  │ 0.30 for NEUTRAL)    │ for regime         │    │
+│   │ Delta (CC)       │ config range per     │ Same — per regime  │    │
+│   │                  │ regime               │                    │    │
+│   │ IV Sanity        │ 0 < IV < 500%        │ Bad data from API  │    │
+│   │ VRP Gate          │ IV > HV(30d) × 0.8  │ Options too cheap  │    │
+│   │                  │                      │ vs actual vol      │    │
+│   │ GEX Gate (CSP)   │ Chain gamma > 0      │ Dealers short γ,   │    │
+│   │                  │                      │ amplifying moves   │    │
+│   │ RoC Min (CSP)    │ RoC ≥ 12% annualized │ Not enough return  │    │
+│   │ RoC Min (CC)     │ RoC ≥ 8% annualized  │ Not enough return  │    │
+│   └─────────────────┴──────────────────────┴────────────────────┘    │
+│                                                                      │
+│   → Surviving contracts move to Stage 5                              │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│ STAGE 5: CONTRACT PENALTY + FINAL SCORE                              │
+│   For each contract that passed all gates:                           │
+│                                                                      │
+│   final_score = ticker_score + contract_penalty                      │
+│                                                                      │
+│   Contract penalty adjustments:                                      │
+│   ┌────────────────────┬────────────────────────────────────────┐    │
+│   │ DTE 30-45          │ -0.5 (sweet spot bonus)                │    │
+│   │ DTE 14-21          │ +1.5 (short duration penalty)          │    │
+│   │ DTE <7              │ +99 (hard block — gamma explosion)     │    │
+│   │ OI < 100            │ +1.5 (illiquid)                        │    │
+│   │ OI < 500            │ +0.5 (moderate liquidity)              │    │
+│   │ Bid-Ask > 5%        │ +2.0 (wide spread)                     │    │
+│   │ Bid-Ask > 2%        │ +1.0 (moderate spread)                 │    │
+│   │ RoC > 24%           │ -1.5 (high return bonus)               │    │
+│   │ RoC > 18%           │ -0.8 (good return bonus)               │    │
+│   │ IV > 35%            │ -0.5 (elevated premium bonus)          │    │
+│   │ Volume < 50         │ +1.0 (low activity)                    │    │
+│   │ Volume < 10         │ +2.0 (illiquid)                        │    │
+│   │ Delta < 0.15        │ +0.5 (too far OTM)                     │    │
+│   └────────────────────┴────────────────────────────────────────┘    │
+│                                                                      │
+│   → Output: final_score (e.g. 3.0 + (-0.5) = 2.5)                   │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│ STAGE 6: GUARDRAILS + RANKING (src/data/guardrails.py)               │
+│                                                                      │
+│   1. Dedup: best contract per ticker per strategy (CSP + CC)         │
+│   2. Sort all candidates by final_score (lowest = best)              │
+│   3. Apply position limits:                                          │
+│      ┌─────────────────────┬──────────────────────────────────┐      │
+│      │ Single position     │ ≤ 15% of net liquidation value   │      │
+│      │ Sector concentration│ ≤ 25% of portfolio               │      │
+│      │ CSP capital deployed│ ≤ 25% of NLV                     │      │
+│      │ Open positions      │ ≤ 8 total                        │      │
+│      │ Daily new trades    │ ≤ 2 per cycle                    │      │
+│      │ Cash buffer         │ ≥ 25% recommended, ≥ 10% block   │      │
+│      │ CSP capital req     │ ≤ 80% of available cash          │      │
+│      └─────────────────────┴──────────────────────────────────┘      │
+│   4. Use --force to skip all guardrails                              │
+│                                                                      │
+│   → Output: TOP N ranked, deduped, guardrail-cleared candidates      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Example: How MU CSP $820 Gets Scored (1.3 — Excellent)
+
+Walking through the pipeline for MU on 2026-07-12 (VIX 15.0, CAUTIOUS regime):
+
+```
+STAGE 1 — Raw Data (moomoo OpenD)
+  Price: $979.30 | Spread: 0.03% | Vol Ratio: 0.66 | PE(TTM): 22.1 | MCap: $1.1T
+
+STAGE 2 — Compute (enrich_stock_snapshot)
+  RSI(14)=40.4 | SMA50=$898.92 | SMA200=$464.30 | ADX=46.3 | HV(30d)=116.6% | Beta=3.20
+
+STAGE 3 — Ticker Score (5 dimensions, weighted)
+  Technical (25%):
+    RSI(40.4)=3.0 (40-60 range)  |  Trend(price>SMA50>SMA200)=1.0
+    ADX(46.3)=1.0 (strong trend) |  VolRatio(0.66)=7.0 (below avg)
+    → raw = 3.0×0.35 + 1.0×0.30 + 1.0×0.20 + 7.0×0.15 = 2.60
+    → weighted = 2.60 × 0.25 = 0.650
+
+  Options Eco (25%):
+    Spread(0.03%)=1.0 (tight) | IV Rank(50)=1.0 (sweet spot)
+    MCap($1.1T)=1.0 (mega-cap) | Beta(3.20)=9.0 (very volatile ⚠️)
+    → raw = 1.0×0.25 + 1.0×0.25 + 1.0×0.25 + 9.0×0.25 = 3.00
+    → weighted = 3.00 × 0.25 = 0.750
+
+  Fundamental (15%):
+    PE(22.1)=1.0 (reasonable) | Div(0.05%)=5.0 (near-zero) | EPS(+$7.59)=1.0
+    → raw = 1.0×0.40 + 5.0×0.30 + 1.0×0.30 = 2.20
+    → weighted = 2.20 × 0.15 = 0.330
+
+  External Sentiment (20%) — live yfinance data:
+    Consensus=STRONG_BUY (-1.5) + Upside=+51.7% (-1.0) + No blackout + Neutral insider + News=51
+    → base 4.0 → 4.0 - 1.5 - 1.0 = 1.5
+    → weighted = 1.5 × 0.20 = 0.300
+
+  Macro/Risk (15%):
+    Regime=CAUTIOUS → base=4.0 (between NEUTRAL 3.0 and VOLATILE 6.0)
+    → weighted = 4.0 × 0.15 = 0.600
+
+  ticker_score = 0.650 + 0.750 + 0.330 + 0.300 + 0.600 = 2.63
+
+STAGE 4 — Contract Filters (for CSP $820, 2026-08-22, DTE=41)
+  bid=$50.55 ✓ | OI=1153 ✓ | Vol=108 ✓ | Δ=0.235 (in CAUTIOUS range 0.10-0.25) ✓
+  IV=97% sane ✓ | VRP: 97% > 116.6%×0.8(=93.3%) ✓ | RoC=54.9% > 12% ✓
+
+STAGE 5 — Contract Penalty (per-contract adjustments to ticker score)
+  DTE=41 (sweet spot 30-45) → -0.5 bonus
+  OI=1153 (>500) → no penalty
+  Spread=4.92% (>2%, <5%) → +1.0 medium spread penalty
+  Delta=0.235 (>0.15) → no penalty
+  RoC=54.9% (>24%) → -1.5 high return bonus
+  IV=97% (>35%) → -0.5 elevated IV bonus
+  Volume=108 (>50) → no penalty
+  → total penalty = -0.5 + 0 + 1.0 + 0 + (-1.5) + (-0.5) + 0 = -1.5
+
+  final_score = 2.63 + (-1.5) = 1.13 → rounds to 1.3 ⭐
+
+  Why not 1.0? The remaining drag comes from:
+    • Beta 3.20 → 9.0/10 in Options Eco (MU is 3× as volatile as SPY)
+    • CAUTIOUS regime → macro base 4.0 (vs 2.0 for BULLISH)
+    • Contract spread 4.92% → barely avoided the +2.0 wide-spread penalty
+    • Low volume ratio (0.66×) → 7.0 in Technical
+    • No dividend (0.05%) → 5.0 in Fundamental
+
+STAGE 6 — Guardrails
+  MU not in portfolio → concentration check passes
+  CSP capital ($82,000) vs NLV → must be ≤ 15% of net liquidation
+  Cash buffer check → applied at runtime per regime rules
+```
+
+### Scoring Dependency Map
+
+```
+                          ┌─────────────────────────────┐
+                          │     FINAL SCORE (1-10)       │
+                          │  ticker_score + penalty      │
+                          └─────────────┬───────────────┘
+                                        │
+              ┌─────────────────────────┼─────────────────────────┐
+              │                         │                         │
+    ┌─────────▼─────────┐   ┌──────────▼──────────┐   ┌─────────▼─────────┐
+    │  TICKER SCORE      │   │  CONTRACT PENALTY    │   │   GUARDRAILS      │
+    │  (5 dimensions)    │   │  (12 adjustments)    │   │   (7 checks)      │
+    └─────────┬─────────┘   └──────────┬──────────┘   └─────────┬─────────┘
+              │                        │                         │
+    ┌─────────┼─────────┐     ┌───────┼────────┐       ┌───────┼────────┐
+    │         │         │     │       │        │       │       │        │
+    ▼         ▼         ▼     ▼       ▼        ▼       ▼       ▼        ▼
+Technical  Options  Fund    DTE     OI     Spread   Concen-  Cash    Daily
+ (25%)     Eco (25%)(15%)  bonus  penalty  penalty  tration  buffer  limit
+    │         │         │     │       │        │       │       │        │
+    ▼         ▼         ▼     ▼       ▼        ▼       ▼       ▼        ▼
+  RSI       Spread     PE    -0.5    +1.5     +2.0    15% max  25%    2/day
+  SMA       IV Rank    Div   to      to       to               min
+  ADX       MCap       EPS   +99     +0.5     +1.0
+  VolRatio  Beta                   (OI<500) (spread>2%)
+    │                              │
+    │                              ▼
+    │                         Vol <50 → +1.0
+    │                         Vol <10 → +2.0
+    │
+    ▼
+  All computed by
+  enrich_stock_snapshot()
+  from price history
+```
 
 ---
 
@@ -903,6 +1293,152 @@ Polls REAL moomoo account (`accinfo_query`, `position_list_query`, `order_list_q
 
 Full rules in [GOAL.md](GOAL.md) Actions. **Always reference GOAL.md before making trade recommendations.**
 
+## How The Screener Works
+
+The screener (`scripts/screener.py`) is the core decision engine. Every trade candidate flows through this pipeline:
+
+```
+Watchlist (moomoo) → Stock Snapshot → 5-Dimension Ticker Score
+                                         │
+                    Option Chain (7-90 DTE) → Per-Contract Filters
+                                         │
+                    Final Score = Ticker Score + Contract Penalty
+                                         │
+                    Dedup (best per ticker) → Ranked Top N
+```
+
+### Step 1: VIX → Regime → Gates
+
+VIX determines the market regime, which controls everything downstream. Thresholds aligned with standard VIX interpretation:
+
+| VIX | Standard Meaning | Our Regime | Size | CSP Delta | CC Delta | CSP:CC |
+|-----|-----------------|------------|:---:|:---:|:---:|:---:|
+| < 12 | Extreme complacency | **BULLISH** | 100% | 0.15-0.30 | 0.20-0.30 | 60:40 |
+| 12-20 | Normal, healthy | **NEUTRAL** | 75% | 0.15-0.30 | 0.20-0.30 | 50:50 |
+| 20-25 | Rising anxiety | **CAUTIOUS** | 50% | 0.10-0.25 | 0.25-0.35 | 30:70 |
+| 25-30 | Elevated swings | **VOLATILE** | 25% | 0.05-0.20 | 0.30-0.40 | 10:90 |
+| > 30 | Panic, fear | **BEARISH** | 0% | NONE | existing only | 0:100 |
+
+> **How regime is determined:** The regime isn't just VIX alone. `yfinance_client.py` computes a composite `regime_score` from 5 factors: Fear & Greed Index, SPY price vs SMA trend, VIX level, yield curve (10Y-2Y), and credit spreads. Each votes, and the combined score maps to the regime label. This means VIX can be 15 (normally NEUTRAL) but if Fear & Greed is in Extreme Fear and credit spreads are stressed, the composite can push the regime to CAUTIOUS.
+
+**How VIX/Regime flows into scoring:**
+
+| Mechanism | Impact | Example (VIX 15, NEUTRAL) |
+|-----------|--------|---------------------------|
+| Delta range gate | Narrows/allows option candidates | CSP: only 0.15-0.30 delta pass |
+| RoC multiplier | Reduces effective return | 24% RoC × 0.75 = 18% (still passes 12% min) |
+| Macro score (15% weight) | Boosts/penalizes ticker score | NEUTRAL = 3.0 × 0.15 = +0.45 to score |
+| CSP pause trigger | Hard blocks new CSPs | VIX > 25 → no CSPs. Not triggered at 15. |
+| Position sizing | Caps capital per trade | 75% size = tighter capital allocation |
+
+### Step 2: Contract Filters (Per Option)
+
+Each option contract must pass these gates before scoring:
+
+| Gate | Rule | Config Key |
+|------|------|------------|
+| Bid > 0 | Must have a market price | — |
+| OI ≥ 500 | Liquid enough to trade | `options.liquidity.open_interest_min` |
+| Volume ≥ 10 | Recent activity | `options.liquidity.volume_min` |
+| Delta in range | Per regime (see table above) | `options.delta.csp` / `options.delta.cc` |
+| IV sane | 0 < IV < 500% | — |
+| VRP gate | IV > 80% of historical vol | — |
+| RoC minimum | CSP ≥ 12%, CC ≥ 8% | `options.roc_min` |
+
+### Step 3: 5-Dimension Ticker Score
+
+| Dimension | Weight | What It Measures |
+|-----------|:---:|-----------------|
+| Technical | 25% | RSI, trend alignment (SMA stack), ADX, volume ratio |
+| Options Quality | 25% | Bid-ask spread, IV rank, market cap, beta |
+| Fundamental | 15% | P/E ratio, dividend yield |
+| External Sentiment | 20% | Analyst consensus, earnings blackout, news score |
+| Macro/Risk | 15% | VIX regime (see table), position multiplier |
+
+Base score starts at 5.0. Positive factors subtract (better), negative add (worse). Range: 1 (best) to 10 (worst).
+
+### Step 4: Contract Penalties
+
+Added to ticker score per contract. Rewards good contracts, penalizes risky ones:
+
+| Factor | Penalty/Bonus |
+|--------|:---:|
+| DTE 30-45 (sweet spot) | **−0.5** bonus |
+| DTE < 21 | +1.5 penalty |
+| DTE < 7 | **+99** hard block |
+| OI < 100 | +1.5 penalty |
+| Spread > 5% | +2.0 penalty |
+| RoC > 24% | **−1.5** bonus |
+| IV > 35% | **−0.5** bonus |
+
+### Step 5: Dedup → Output
+
+- One best candidate per ticker (lowest score wins)
+- Skip tickers with existing option positions
+- Rank by score ascending → top N
+
+```bash
+# Normal run (respects all gates):
+python3 scripts/screener.py --top 10
+
+# Show what's mathematically available (skip position/cash limits):
+python3 scripts/screener.py --top 10 --ignore-guardrails
+
+# Covered calls only:
+python3 scripts/screener.py --cc-only --top 5
+```
+
+### Stop-Loss System — Layered Defense
+
+Every option position checked by `portfolio_check.py` runs through two stop-loss layers. **Stop-loss triggers override profit targets** — risk management takes priority over profit taking.
+
+#### Layer 1: Premium Multiple Stop (DTE-Adjusted)
+
+Loss is measured as a multiple of the premium collected. If you sold for $2.00 and the buyback is $6.00, that's a 2× loss.
+
+| DTE | Alert At | Close At | Logic |
+|-----|:---:|:---:|-------|
+| **> 30 days** | 2× premium | **3× premium** | Plenty of time. Let theta work. |
+| **21-30 days** | 1× premium | **2× premium** | Rolling window. Consider rolling for credit. |
+| **< 21 days** | 0.5× premium | **1.5× premium** | Gamma risk. Don't let small become catastrophic. |
+
+**Example**: AAPL P300, entry $2.50, DTE 25, current bid $5.00
+- Loss = ($5.00 - $2.50) / $2.50 = **1× loss** → ⚠️ STOP ALERT at 21-30 DTE
+- If bid rises to $7.50 → 2× loss → 🛑 STOP LOSS — close immediately
+
+#### Layer 2: Delta Gate
+
+Directional risk regardless of P&L. Delta measures assignment probability.
+
+| Strategy | Threshold | Action |
+|----------|:---:|--------|
+| **CSP** | \|Δ\| ≥ 0.60 | 🛑 DELTA STOP — 60% assignment risk, too directional. Cut it. |
+| **CSP** | \|Δ\| ≥ 0.50 | ⚠️ ITM — monitor closely, prepare for assignment |
+| **CC** | Δ ≥ 0.50 | ⚠️ DELTA WARN — 50% chance called away. Prepare shares. |
+
+#### Decision Priority (Highest Wins)
+
+```
+🛑 STOP LOSS      >  🛑 DELTA STOP     >  ✅ CLOSE (50% profit)
+  >  🔄 ROLL       >  ⚠️ ALERT         >  👍 HOLD
+```
+
+Loss prevention beats profit taking. A stop-loss trigger at 3× will override a 50% profit close decision.
+
+#### Config
+
+All thresholds in `config/rules.yaml` → `stop_loss:` section. Tweak without code changes:
+
+```yaml
+stop_loss:
+  premium_stop:
+    far_dte: 30, far_alert: 2.0, far_close: 3.0
+    mid_dte: 21, mid_alert: 1.0, mid_close: 2.0
+    near_alert: 0.5, near_close: 1.5
+  delta:
+    csp_critical: 0.60, cc_critical: 0.50
+```
+
 ## Decision Framework
 
 ### Layer 1: Macro Regime Gate → Position Sizing
@@ -911,10 +1447,10 @@ Full rules in [GOAL.md](GOAL.md) Actions. **Always reference GOAL.md before maki
 
 | Regime | VIX | Size | Cash Reserve | CSP Delta | CC Delta | CSP:CC Ratio |
 |--------|-----|:---:|:---:|:---:|:---:|:---:|
-| BULLISH | < 15 | 100% | ≥ 15% | 0.20-0.30 | 0.20-0.30 | 60:40 |
-| NEUTRAL | 15-20 | 75% | ≥ 20% | 0.20-0.30 | 0.20-0.30 | 50:50 |
-| CAUTIOUS | 20-25 | 50% | ≥ 25% | 0.15-0.25 | 0.25-0.35 | 30:70 |
-| VOLATILE | 25-30 | 25% | ≥ 30% | 0.10-0.20 | 0.30-0.40 | 10:90 |
+| BULLISH | < 12 | 100% | ≥ 15% | 0.15-0.30 | 0.20-0.30 | 60:40 |
+| NEUTRAL | 12-20 | 75% | ≥ 20% | 0.15-0.30 | 0.20-0.30 | 50:50 |
+| CAUTIOUS | 20-25 | 50% | ≥ 25% | 0.10-0.25 | 0.25-0.35 | 30:70 |
+| VOLATILE | 25-30 | 25% | ≥ 30% | 0.05-0.20 | 0.30-0.40 | 10:90 |
 | BEARISH | > 30 | 0% | ≥ 35% | NONE | existing only | 0:100 |
 
 ### CSP Pause Triggers (stop new CSPs immediately if ANY true)

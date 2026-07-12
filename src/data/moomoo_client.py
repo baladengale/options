@@ -199,7 +199,8 @@ class MoomooClient:
                         seen.add(code)
             chunk_start = chunk_end + 1
 
-        self._chain_cache[cache_key] = codes
+        if codes:  # only cache successful fetches
+            self._chain_cache[cache_key] = codes
         return codes
 
     def get_option_snapshots(
@@ -369,8 +370,7 @@ class MoomooClient:
             ticker, max_count=days, ktype=KLType.K_DAY, autype=AuType.QFQ
         )
         if ret != RET_OK or data is None or len(data) == 0:
-            self._history_cache[cache_key] = []
-            return []
+            return []  # don't cache failures — retry next time
 
         records = []
         for _, row in data.iterrows():

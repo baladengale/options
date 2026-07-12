@@ -449,10 +449,10 @@ class OIEEngine:
             # ── 5. Apply guardrails (skip if --ignore-guardrails) ──
             if self.force:
                 log.info("Guardrails DISABLED — executing all candidates")
-            # Re-read state after exits
+            # Re-read state after exits — guardrails count OPTIONS ONLY
             cash = float(self.db.get_state('cash', '0'))
-            active_all = self.db.get_active_positions()
             open_options = self.db.get_active_options()
+            active_all = open_options  # guardrails only check options
             daily_new = self.db.get_daily_new_count()
 
             # NLV = cash + real stock market value (for accurate concentration %)
@@ -911,17 +911,27 @@ class OIEEngine:
             print("❌ Paper portfolio not seeded. Run 'init' first.")
             return
 
-        cash = float(self.db.get_state('cash', '0'))
+        # Cash is DERIVED from trade history (never stale):
+        #   seeded_cash + sum of all cash_change in paper_trades
+        seeded_cash = float(self.db.get_state('seeded_cash', '0'))
+        trade_flows = self.db._conn.execute(
+            "SELECT COALESCE(SUM(cash_change), 0) as total FROM paper_trades WHERE cash_change != 0"
+        ).fetchone()
+        cash = seeded_cash + (trade_flows['total'] or 0)
         seeded_at = self.db.get_state('seeded_at', 'unknown')
         last_cycle = self.db.get_state('last_cycle', 'never')
         cycle_count = int(self.db.get_state('cycle_count', '0'))
         options = self.db.get_active_options()
+        stocks = self.db.get_active_stocks()
 
         option_premium = sum((p['entry_premium'] or 0) * abs(p['qty']) * 100 for p in options)
         option_liability = sum((p['current_bid'] or 0) * abs(p['qty']) * 100 for p in options)
         option_unrealized = option_premium - option_liability
         realized = self.db.get_closed_pnl()
-        total = cash + option_unrealized
+        stock_total = sum(p['cost_price'] * abs(p['qty']) for p in stocks) if stocks else 0.0
+        # Cash buffer: cash as % of cash+stocks (option liability is contingent)
+        total_assets = cash + stock_total
+        cash_pct = (cash / total_assets * 100) if total_assets > 0 else 0
 
         print("=" * 70)
         print("  📊 OIE — OPTIONS PORTFOLIO")
@@ -936,15 +946,15 @@ class OIEEngine:
         print(f"     Unrealized P&L:   ${option_unrealized:>+12,.2f}")
         print(f"     Realized P&L:     ${realized:>+12,.2f}")
         print(f"     Total P&L:        ${realized + option_unrealized:>+12,.2f}")
-        cash_pct = (cash / (cash + option_premium) * 100) if (cash + option_premium) > 0 else 0
+        # Cash buffer: cash as % of cash+stocks (option liability is contingent)
         print(f"     Cash buffer:      {cash_pct:>11.1f}%")
         print()
 
         if options:
             print(f"  📊 OPTIONS ({len(options)})")
-            print(f"  {'Ticker':<6s} {'Type':>5s} {'Strike':>8s} {'Expiry':>12s} "
+            print(f"  {'ID':>4s} {'Ticker':<6s} {'Type':>5s} {'Strike':>8s} {'Expiry':>12s} "
                   f"{'Qty':>5s} {'Entry':>8s} {'Bid':>8s} {'P&L':>10s} {'Cap%':>7s} {'Δ':>6s} {'DTE':>4s}")
-            print(f"  {'-'*6} {'-'*5} {'-'*8} {'-'*12} {'-'*5} {'-'*8} {'-'*8} {'-'*10} {'-'*7} {'-'*6} {'-'*4}")
+            print(f"  {'-'*4} {'-'*6} {'-'*5} {'-'*8} {'-'*12} {'-'*5} {'-'*8} {'-'*8} {'-'*10} {'-'*7} {'-'*6} {'-'*4}")
             for o in sorted(options, key=lambda o: (o['ticker'], o['expiry'] or '')):
                 entry = o['entry_premium'] or 0
                 bid = o['current_bid'] or 0
@@ -953,24 +963,30 @@ class OIEEngine:
                 profit_pct = ((entry - bid) / entry * 100) if entry > 0 else 0
                 delta = o['current_delta'] or 0
                 dte = o.get('dte_initial', '?')
-                print(f"  {o['ticker']:<6s} {o['pos_type']:>5s} ${o['strike']:>7,.2f} "
+                print(f"  {o['id']:>4d} {o['ticker']:<6s} {o['pos_type']:>5s} ${o['strike']:>7,.2f} "
                       f"{o['expiry'] or '':>12s} {qty:>4,.0f} "
                       f"${entry:>7,.2f} ${bid:>7,.2f} ${pnl:>+9,.2f} "
                       f"{profit_pct:>6.1f}% {delta:>+5.3f} {str(dte):>4s}")
 
         # Stocks (reference only — for CC tracking, not screened)
-        stocks = self.db.get_active_stocks()
         if stocks:
-            stock_total = sum(p['cost_price'] * abs(p['qty']) for p in stocks)
             print(f"\n  📈 STOCKS ({len(stocks)} tickers, reference — NOT screened)")
             print(f"  {'Ticker':<8s} {'Qty':>6s} {'Cost':>10s} {'Value':>12s}")
             print(f"  {'-'*8} {'-'*6} {'-'*10} {'-'*12}")
             for s in sorted(stocks, key=lambda x: x['ticker']):
                 print(f"  {s['ticker']:<8s} {s['qty']:>6,.0f} ${s['cost_price']:>9,.2f} ${s['cost_price']*s['qty']:>11,.2f}")
-            total_portfolio = cash + stock_total + option_premium
             print(f"  {'─':─>8} {'─':─>6} {'─':─>10} {'─':─>12}")
             print(f"  {'Total':<8s} {'':>6s} {'':>10s} ${stock_total:>11,.2f}")
-            print(f"\n  💰 Cash + Stocks = ${cash + stock_total:,.2f}")
+
+        # Net Liquidation Value = cash + stocks(at cost) - option liability
+        # Cash already includes premiums received. Option liability = cost to close.
+        paper_nlv = cash + stock_total - option_liability
+        print(f"\n  💰 PAPER NET LIQ VALUE")
+        print(f"     Cash (incl. premiums):  ${cash:>12,.2f}")
+        print(f"     Stocks (at cost):       ${stock_total:>12,.2f}")
+        print(f"     Option liability:       ${-option_liability:>12,.2f}")
+        print(f"     {'─'*30}")
+        print(f"     Paper NLV:              ${paper_nlv:>12,.2f}")
 
         events = self.db.get_recent_events(8)
         if events:
@@ -1035,6 +1051,29 @@ def main():
     sub.add_parser('history', help='Show P&L history')
     reset_p = sub.add_parser('reset', help='Wipe paper portfolio')
     reset_p.add_argument('--force', action='store_true', help='Skip confirmation')
+
+    # ── sim: manual paper trade simulation ──
+    sim_p = sub.add_parser('sim', help='Simulate manual paper trades (no OpenD needed)')
+    sim_sub = sim_p.add_subparsers(dest='sim_cmd', help='Action')
+
+    sim_open = sim_sub.add_parser('open', help='Open a paper position')
+    sim_open.add_argument('strategy', choices=['CSP', 'CC'], help='Strategy')
+    sim_open.add_argument('ticker', help='Ticker symbol')
+    sim_open.add_argument('strike', type=float, help='Strike price')
+    sim_open.add_argument('expiry', help='Expiry date (YYYY-MM-DD)')
+    sim_open.add_argument('--premium', type=float, required=True, help='Premium per contract')
+    sim_open.add_argument('--contracts', type=int, default=1, help='Number of contracts')
+    sim_open.add_argument('--delta', type=float, default=0.25, help='Option delta')
+    sim_open.add_argument('--iv', type=float, default=30, help='Implied volatility %')
+
+    sim_close = sim_sub.add_parser('close', help='Close a paper position')
+    sim_close.add_argument('pos_id', type=int, help='Position ID to close')
+    sim_close.add_argument('--price', type=float, required=True, help='Exit price (buyback cost)')
+
+    sim_expire = sim_sub.add_parser('expire', help='Expire a paper position OTM')
+    sim_expire.add_argument('pos_id', type=int, help='Position ID to expire')
+
+    sim_sub.add_parser('list', help='List all paper positions with IDs')
 
     args = parser.parse_args()
 
@@ -1149,6 +1188,66 @@ def main():
                 return
         engine.db.reset_all()
         print("✅ Paper portfolio reset. Run 'init' to re-seed.")
+
+    elif args.cmd == 'sim':
+        if not engine.db.is_seeded():
+            print("❌ Not seeded. Run 'init' first (or use 'sim' without a portfolio — positions only).")
+            # Auto-seed with just cash for sim mode
+            engine.db.seed_portfolio({}, 50000, 0)
+            print("   Auto-seeded with $50,000 cash for simulation.\n")
+
+        if args.sim_cmd == 'open':
+            pos_type = 'PUT' if args.strategy == 'CSP' else 'CALL'
+            qty = -args.contracts
+            dte = max(0, (date.fromisoformat(args.expiry) - date.today()).days)
+            premium_total = args.premium * args.contracts * 100
+            pos_id = engine.db.open_position(
+                ticker=args.ticker.upper(), pos_type=pos_type, qty=qty,
+                cost_price=args.strike, strike=args.strike,
+                expiry=args.expiry, dte=dte,
+                entry_premium=args.premium, delta=args.delta, iv=args.iv,
+                cash_impact=premium_total,
+                note=f'SIM: {args.strategy} ${args.strike:.0f} {args.expiry} '
+                     f'prem=${args.premium:.2f}×{args.contracts}')
+            # Update cash — premium received for selling option
+            cash = float(engine.db.get_state('cash', '0'))
+            cash += premium_total
+            engine.db.set_state('cash', str(round(cash, 2)))
+            engine.db._conn.commit()
+            print(f"✅ Opened {args.strategy} {args.ticker} ${args.strike:.0f} {args.expiry}")
+            print(f"   Position ID: {pos_id} | Premium: ${premium_total:,.2f} | DTE: {dte}")
+            engine.show_status()
+
+        elif args.sim_cmd == 'close':
+            pos = engine.db.get_position(args.pos_id)
+            if not pos:
+                print(f"❌ Position {args.pos_id} not found")
+                return
+            buyback_cost = args.price * abs(pos['qty']) * 100
+            pnl = engine.db.close_position(args.pos_id, args.price, 'SIM_CLOSE',
+                                           cash_impact=-buyback_cost)
+            # Update cash — paying to buy back the option
+            cash = float(engine.db.get_state('cash', '0'))
+            cash -= buyback_cost
+            engine.db.set_state('cash', str(round(cash, 2)))
+            engine.db._conn.commit()
+            print(f"✅ Closed position {args.pos_id} @ ${args.price:.2f}")
+            print(f"   P&L: ${pnl:,.2f} | Reason: SIM_CLOSE")
+            engine.show_status()
+
+        elif args.sim_cmd == 'expire':
+            pos = engine.db.get_position(args.pos_id)
+            if not pos:
+                print(f"❌ Position {args.pos_id} not found")
+                return
+            pnl = engine.db.expire_position(args.pos_id)
+            # No cash change — premium already received, no buyback needed
+            print(f"✅ Expired position {args.pos_id} — full premium kept")
+            print(f"   P&L: ${pnl:,.2f}")
+            engine.show_status()
+
+        elif args.sim_cmd == 'list':
+            engine.show_status()
 
     else:
         engine.show_status()

@@ -443,14 +443,41 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
         if profit_captured < 0:
             decision = '🔄 CONSIDER ROLLING'
 
-    # Delta / ITM risk
-    if delta > 0.50 and strategy == 'CC':
+    # Layer 2: Delta gates (from config)
+    if strategy == 'CSP' and delta >= 0.60:
+        score += 2.0
+        decision = '🛑 DELTA STOP — |Δ|≥0.60, cut position'
+    elif strategy == 'CC' and delta >= 0.50:
         score += 1.5
-        decision = '⚠️  ITM RISK — assignment likely'
-    elif delta > 0.50 and strategy == 'CSP':
+        decision = '⚠️  DELTA WARN — Δ≥0.50, assignment risk'
+    elif strategy == 'CSP' and delta >= 0.50:
         score += 1.0
-        if 'CLOSE' not in decision:
+        if 'CLOSE' not in decision and 'STOP' not in decision:
             decision = '⚠️  ITM — assignment risk'
+
+    # Layer 1: Premium multiple stop-loss (DTE-adjusted)
+    # profit_captured is a percentage: positive = profit, negative = loss
+    if profit_captured < 0:  # position is underwater
+        loss_multiple = abs(profit_captured) / 100  # -150% → 1.5× loss
+
+        if dte > 30:
+            if loss_multiple >= 3.0:
+                score += 2.0; decision = '🛑 STOP LOSS — 3× premium lost'
+            elif loss_multiple >= 2.0:
+                score += 1.0
+                if 'STOP' not in decision: decision = '⚠️  STOP ALERT — 2× premium lost'
+        elif dte > 21:
+            if loss_multiple >= 2.0:
+                score += 2.0; decision = '🛑 STOP LOSS — 2× premium, consider rolling'
+            elif loss_multiple >= 1.0:
+                score += 1.0
+                if 'STOP' not in decision: decision = '⚠️  STOP ALERT — 1× premium lost'
+        else:  # dte <= 21
+            if loss_multiple >= 1.5:
+                score += 2.5; decision = '🛑 STOP LOSS — 1.5× premium, gamma risk'
+            elif loss_multiple >= 0.5:
+                score += 1.0
+                if 'STOP' not in decision: decision = '⚠️  NEAR STOP — monitor closely'
 
     # Earnings blackout
     if yf_client and pos['ticker']:
@@ -459,8 +486,8 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             score += 1.5
             decision = '⚠️  EARNINGS IN DTE — close before'
 
-    # Heavy loss
-    if pl < -500:
+    # Heavy loss catch-all
+    if pl < -500 and 'STOP' not in decision:
         score += 1.5
         if 'CLOSE' not in decision:
             decision = '🔴 UNDERWATER — evaluate exit'

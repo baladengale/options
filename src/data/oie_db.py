@@ -202,6 +202,8 @@ class OIEDB:
         ).fetchone()
         if not pos:
             return
+        if pos['status'] != 'ACTIVE':
+            return  # already closed/expired/assigned
 
         entry = pos['entry_premium'] or 0
         qty = abs(pos['qty'])
@@ -246,10 +248,10 @@ class OIEDB:
             WHERE id=?
         """, (now, pnl, pos_id))
 
-        cash_returned = pos['cost_price'] * qty * 100 if pos['pos_type'] == 'PUT' else 0
+        # Premium already received at open — no cash change on expiry
         self._log_trade(now, 'EXPIRE', pos['ticker'], pos_id,
                       f'Expired OTM: +${pnl:,.2f} premium kept',
-                      cash_change=cash_returned)
+                      cash_change=0)
         self._conn.commit()
         return pnl
 

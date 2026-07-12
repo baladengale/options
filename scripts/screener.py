@@ -198,6 +198,9 @@ def main():
     parser.add_argument('--log', action='store_true', help='Log top picks to trade log')
     parser.add_argument('--force', action='store_true',
                         help='Skip guardrails + market hours checks — show all candidates')
+    parser.add_argument('--validate', type=str, nargs='?', const='__first__',
+                        help='Validate single ticker only (e.g. --validate AAPL). '
+                             'Without arg, uses first ticker from watchlist.')
     args = parser.parse_args()
 
     candidates: list[TradeCandidate] = []
@@ -231,7 +234,31 @@ def main():
         print(f"🌍 VIX {vix:.1f} | {regime} | Size: {regime_mult:.0%}"
               + (f" | 10Y {macro.treasury_10y:.1f}%" if yf_client and macro and macro.treasury_10y else ""))
 
-        log.info(f"SCAN START: {len(WATCHLIST)} tickers, regime={regime}, vix={vix}")
+        log.info(f"SCAN_START|tickers={len(WATCHLIST)}|regime={regime}|vix={vix:.1f}|"
+                 f"size_mult={regime_mult:.0%}|positions={len(PORTFOLIO)}|"
+                 f"liquid=${CASH+FUND:,.0f}|cash=${CASH:,.0f}|fund=${FUND:,.0f}|"
+                 f"bp=${BUYING_POWER:,.0f}|dte={_cfg_val(lambda c: c.dte_screen_min)}-{_cfg_val(lambda c: c.dte_screen_max)}|"
+                 f"csp_delta={_cfg_val(lambda c: c.delta_range('csp', regime))}|"
+                 f"cc_delta={_cfg_val(lambda c: c.delta_range('cc', regime))}|"
+                 f"roc_min_csp={_cfg_val(lambda c: c.roc_min_csp)}%|roc_min_cc={_cfg_val(lambda c: c.roc_min_cc)}%")
+        # ── VALIDATE: single ticker mode ──
+        if args.validate:
+            target = args.validate
+            if target == '__first__':
+                target = WATCHLIST[0].replace('US.', '') if WATCHLIST else 'V'
+            # Find matching ticker in watchlist
+            match = [t for t in WATCHLIST if target.upper() in t.upper()]
+            if match:
+                WATCHLIST = [match[0]]
+                log.info(f"VALIDATE mode: only scanning {WATCHLIST[0]}")
+                print(f"🔍 Validate mode — only scanning: {WATCHLIST[0].replace('US.', '')}")
+            else:
+                # Allow tickers not in watchlist — add them temporarily
+                ticker = f'US.{target.upper()}'
+                WATCHLIST = [ticker]
+                log.info(f"VALIDATE mode: added {ticker} (not in watchlist)")
+                print(f"🔍 Validate mode — scanning: {target.upper()} (adhoc, not in watchlist)")
+            print()
         # ── SCAN EACH TICKER (dedup at end — don't skip entire ticker) ──
         # OPTIMIZATION: Batch all stock snapshots upfront (1 API call vs N)
         all_snaps = moomoo.get_stock_snapshots(WATCHLIST)
@@ -248,7 +275,6 @@ def main():
             if snap is None or snap.last_price <= 0:
                 continue
             # Pre-filter: skip illiquid tickers
-            log.debug(f"  {short}: price=${snap.last_price:.2f}, spread={snap.bid_ask_spread_pct or 0:.1f}%, rsi={snap.rsi_14 or 0:.0f}")
             if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > 5.0:
                 log.debug(f"  {short}: SKIP — spread {snap.bid_ask_spread_pct:.1f}% > 5%")
                 continue
@@ -256,6 +282,7 @@ def main():
             history = moomoo.get_price_history(ticker, 252)
             if history:
                 enrich_stock_snapshot(snap, history, spy_history)
+            log.debug(f"  {short}: ${snap.last_price:.2f} rsi={snap.rsi_14 or 0:.0f} hv30={snap.hv_30d or 0:.1%} vol_ratio={snap.volume_ratio or 0:.1f}")
 
             # External sentiment — use shared module
             if yf_client:
@@ -299,10 +326,9 @@ def main():
             dte_min = _cfg_val(lambda c: c.dte_screen_min)
             dte_max = _cfg_val(lambda c: c.dte_screen_max)
             contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=dte_min, dte_max=dte_max)
-            log.debug(f"  {short}: {len(contracts)} option contracts fetched")
             if not contracts:
-                log.debug(f"  {short}: SKIP — no option contracts")
                 continue
+            ticker_candidate_count = 0  # track how many pass for this ticker
             time.sleep(0.25)  # light rate limit (throttle in moomoo_client handles the rest)
 
             has_shares = short in PORTFOLIO and PORTFOLIO[short] >= 100
@@ -361,7 +387,11 @@ def main():
 
                     adj_roc = roc * regime_mult
                     contract_score = ticker_score + _contract_penalty(c, abs_d, adj_roc)
-                    log.debug(f"  {short} CSP candidate: ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={abs_d:.3f} RoC={roc:.1f}% score={contract_score:.1f}")
+                    ticker_candidate_count += 1
+                    if contract_score <= 5:  # only log good candidates at INFO
+                        log.info(f"CSP|{short}|${c.strike:.0f}|DTE={c.dte}|Δ={abs_d:.3f}|"
+                                 f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
+                                 f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
                         ticker=short, strategy='CSP', score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
@@ -391,7 +421,11 @@ def main():
                     if roc < _cfg_val(lambda c: c.roc_min_cc):
                         continue
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
-                    log.debug(f"  {short} CC candidate: ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={c.delta:.3f} RoC={roc:.1f}% score={contract_score:.1f}")
+                    ticker_candidate_count += 1
+                    if contract_score <= 5:
+                        log.info(f"CC|{short}|${c.strike:.0f}|DTE={c.dte}|Δ={c.delta:.3f}|"
+                                 f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
+                                 f"RoC={roc:.1f}%|score={contract_score:.1f}")
                     candidates.append(TradeCandidate(
                         ticker=short, strategy='CC', score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
@@ -402,6 +436,9 @@ def main():
                         capital_required=short in PORTFOLIO and PORTFOLIO[short] * 100 or 0,
                         reason=_reason(ticker_score, contract_score, 'CC'),
                     ))
+
+            if ticker_candidate_count > 0:
+                log.info(f"  {short}: {ticker_candidate_count} candidates passed")
 
     # ── RANK & OUTPUT ──
     # Dedup: one best per ticker (no strategy split). Skip tickers with existing options.
@@ -415,6 +452,9 @@ def main():
             deduped.append(c)
             seen.add(c.ticker)
     top = deduped[:args.top]
+
+    top_str = ", ".join(f"{c.ticker}:{c.strategy}${c.strike:.0f}s={c.score:.1f}" for c in top[:5])
+    log.info(f"SCAN_DONE|raw={len(candidates)}|top={len(top)}|{top_str}")
 
     print(f"\n{'='*90}")
     print(f"  🎯 TOP {len(top)} TRADES  (1 = best, 10 = worst)")
@@ -641,6 +681,7 @@ def _score_macro(regime: str, regime_mult: float, blackout: bool) -> float:
     """Score macro/risk context. 1 = favorable, 10 = unfavorable."""
     if regime == 'BULLISH':    base = 2.0
     elif regime == 'NEUTRAL':  base = 3.0
+    elif regime == 'CAUTIOUS': base = 4.0
     elif regime == 'VOLATILE': base = 6.0
     elif regime == 'BEARISH':  base = 8.0
     else:                      base = 5.0
