@@ -38,7 +38,6 @@ log = get_logger('screener')
 from src.data.moomoo_client import MoomooClient
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
-from src.data.iv_history import IVHistoryTracker
 from src.data.models import StockSnapshot, OptionSnapshot
 from src.analysis.sentiment import (
     get_macro_context, get_ticker_sentiment, get_watchlist_sentiment,
@@ -46,18 +45,7 @@ from src.analysis.sentiment import (
 )
 from src.config import get_config
 
-_iv_tracker: Optional['IVHistoryTracker'] = None
 _cfg = None  # lazy-loaded config
-
-
-def _get_iv_tracker() -> Optional['IVHistoryTracker']:
-    global _iv_tracker
-    if _iv_tracker is None:
-        try:
-            _iv_tracker = IVHistoryTracker()
-        except Exception:
-            pass
-    return _iv_tracker
 
 # Watchlist from CLAUDE.md
 # Default watchlist (used if moomoo watchlist fetch fails)
@@ -90,10 +78,11 @@ def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max
 
 
 def _fetch_live_watchlist(moomoo) -> list[str]:
-    """Pull US stock tickers from moomoo 'Options' watchlist group. Fallback to default."""
+    """Pull US stock tickers from moomoo watchlist group (name from config). Fallback to default."""
     import re
+    group_name = _cfg_val(lambda c: c.moomoo_watchlist_group, 'Options')
     try:
-        ret, data = moomoo.ctx.get_user_security('Options')
+        ret, data = moomoo.ctx.get_user_security(group_name)
         if ret == RET_OK and data is not None and len(data) > 0:
             tickers = []
             for _, row in data.iterrows():
@@ -195,7 +184,6 @@ def main():
     parser.add_argument('--csp-only', action='store_true', help='Cash-secured puts only')
     parser.add_argument('--top', type=int, default=10, help='Show top N results')
     parser.add_argument('--no-external', action='store_true', help='Skip yfinance (offline)')
-    parser.add_argument('--log', action='store_true', help='Log top picks to trade log')
     parser.add_argument('--force', action='store_true',
                         help='Skip guardrails + market hours checks — show all candidates')
     parser.add_argument('--validate', type=str, nargs='?', const='__first__',
@@ -267,8 +255,6 @@ def main():
 
         for ticker in WATCHLIST:
             short = ticker.replace('US.', '')
-            if short in EXISTING_OPTIONS:
-                continue
 
             # Stock snapshot (from batch)
             snap = snap_map.get(ticker)
@@ -300,15 +286,8 @@ def main():
                 news_score = 50
             insider_sentiment = 'NEUTRAL'  # not in TickerSentiment yet
 
-            # IV rank from history (prefer history over snapshot-only)
-            iv_rank = 50.0
-            iv_tracker = _get_iv_tracker()
-            if iv_tracker:
-                iv_data = iv_tracker.get_iv_rank(short)
-                if iv_data:
-                    iv_rank = iv_data['iv_rank']
-
             # ── TICKER-LEVEL SCORE (1-10) ──
+            iv_rank = 50.0  # default (iv_history removed — set neutral)
             ticker_score = _compute_ticker_score(
                 snap=snap,
                 trend_composite=_trend_composite(snap),
@@ -446,8 +425,6 @@ def main():
     deduped = []
     candidates.sort(key=lambda x: x.score)
     for c in candidates:
-        if c.ticker in EXISTING_OPTIONS:
-            continue  # already have an option on this ticker
         if c.ticker not in seen:
             deduped.append(c)
             seen.add(c.ticker)
@@ -488,20 +465,6 @@ def main():
         print(f"  ✅ BULLISH regime — CSP premium is favorable, assignment risk lower")
 
     # ── Log top picks for backtesting / paper tracking ──
-    if args.log and candidates:
-        from src.data.trade_log import TradeLog
-        with TradeLog() as tlog:
-            for c in candidates[:10]:
-                tlog.log_recommendation(
-                    ticker=c.ticker, strategy=c.strategy,
-                    strike=c.strike, expiry=c.expiry,
-                    delta=c.delta, premium=c.bid,
-                    contracts=1, roc_pct=c.annualized_roc_pct,
-                    dte=c.dte, score=c.score,
-                    capital_req=c.capital_required,
-                    mode='PAPER',
-                )
-        print(f"  📝 Logged top 10 picks to {TradeLog.__module__}")
 
 
 # ═══════════════════════════════════════════════════════════════

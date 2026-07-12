@@ -391,42 +391,6 @@ class TestBidAskSpreadConstraint:
 # C14: Data Freshness
 # ============================================================
 
-class TestDataFreshnessConstraint:
-    """C14: Data must be within acceptable staleness thresholds."""
-
-    def test_data_fresh(self):
-        """Synced 2 minutes ago → OK."""
-        from datetime import datetime, timedelta
-        from db.sync import check_freshness
-        synced_at = datetime.now() - timedelta(minutes=2)
-        assert check_freshness(synced_at, max_age_seconds=300) is True
-
-    def test_data_stale(self):
-        """Synced 10 minutes ago, max age 5 min → FAIL."""
-        from datetime import datetime, timedelta
-        from db.sync import check_freshness
-        synced_at = datetime.now() - timedelta(minutes=10)
-        assert check_freshness(synced_at, max_age_seconds=300) is False
-
-    def test_price_history_freshness_different_ttl(self):
-        """Price history has 24h TTL — 12h old should pass."""
-        from datetime import datetime, timedelta
-        from db.sync import check_freshness
-        synced_at = datetime.now() - timedelta(hours=12)
-        assert check_freshness(synced_at, max_age_seconds=86400) is True
-
-    def test_price_history_stale(self):
-        """Price history 36h old → FAIL (>24h)."""
-        from datetime import datetime, timedelta
-        from db.sync import check_freshness
-        synced_at = datetime.now() - timedelta(hours=36)
-        assert check_freshness(synced_at, max_age_seconds=86400) is False
-
-
-# ============================================================
-# Composite Constraint Check
-# ============================================================
-
 class TestAllConstraints:
     """Verify the full pre-trade check integrates all 14 constraints."""
 

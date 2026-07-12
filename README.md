@@ -11,34 +11,28 @@ Covered Call & Cash Secured Put screening, scoring, and portfolio management.
 ## Quick Start
 
 ```bash
-# 1. Sync REAL portfolio to local DB (funds + positions + orders)
-python3 scripts/portfolio.py sync
+# 1. Check real portfolio health (reads moomoo directly — no DB needed)
+python3 scripts/portfolio_check.py
 
-# 2. View portfolio from local DB (no OpenD needed)
-python3 scripts/portfolio.py status
+# 2. Screen for best option trades (CC + CSP)
+python3 scripts/screener.py --top 10 --force
 
-# 3. Full daily analysis: sync + screen + portfolio check + log
-python3 scripts/daily_run.py --top 10
-
-# 4. Screen for best trades only
-python3 scripts/screener.py --top 5
-
-# 5. Adhoc research
-python3 scripts/market_data.py NVDA --options
-python3 scripts/market_sentiment.py
-
-# 6. Paper trading engine (validate strategy before live execution)
-python3 scripts/oie_engine.py init          # Once: seed paper portfolio
-python3 scripts/oie_engine.py once          # Run one cycle, see what it does
+# 3. Paper trading engine (validate strategy before live execution)
+python3 scripts/oie_engine.py init          # Once: seed paper portfolio from REAL
+python3 scripts/oie_engine.py once --force  # Run one cycle, see what it does
 python3 scripts/oie_engine.py status        # Check paper portfolio anytime
 python3 scripts/oie_engine.py run           # Continuous mode (30-min cycles)
+
+# 4. Adhoc research
+python3 scripts/market_data.py NVDA --options
+python3 scripts/market_sentiment.py
 ```
 
 **Prerequisites**: OpenD running on `127.0.0.1:11111`. Install: `pip3 install moomoo-api yfinance pandas`.
 
-**Two databases, zero confusion:**
-- `db/options.db` — your **real** portfolio mirror (synced from moomoo)
-- `db/oie_paper.db` — your **paper** trading portfolio (simulated by the engine)
+**One database, one engine:**
+- `db/oie_paper.db` — your **paper** trading portfolio (simulated by the OIE engine)
+- Real portfolio is read directly from moomoo — no local mirror needed
 
 ---
 
@@ -47,19 +41,17 @@ python3 scripts/oie_engine.py run           # Continuous mode (30-min cycles)
 ```
 Moomoo REAL account (read-only poll)
        │
-       ├── portfolio.py sync ──→ db/options.db
-       │     ├── portfolio_snapshots   (fund history)
-       │     ├── positions             (stocks + options)
-       │     └── local_trades          (executed orders)
+       ├── portfolio_check.py ──→ Real portfolio health (direct moomoo read)
+       ├── screener.py ──→ Watchlist screening (direct moomoo read)
        │
-       └── daily_run.py / screener.py ──→ Analysis
-             ├── src/analysis/sentiment.py   (macro + ticker data)
-             ├── src/scoring/                (WHEEL_SCORE engine)
-             ├── src/signals/                (signal generation)
-             └── src/risk/                   (collar check)
+       └── oie_engine.py ──→ db/oie_paper.db
+             ├── paper_positions   (option positions + lifecycle)
+             ├── paper_trades      (full audit trail)
+             ├── paper_snapshots   (P&L over time)
+             └── paper_state       (engine resume state)
 ```
 
-**Key principle**: Scripts poll data and analyze. Never submit orders. Clean separation between data (DB), analysis (src/), and execution (manual).
+**Key principle**: Scripts poll moomoo directly, analyze, and simulate. Never submit orders. One DB for paper trading only.
 
 ---
 
@@ -68,8 +60,7 @@ Moomoo REAL account (read-only poll)
 ```
 options/
 ├── db/
-│   ├── options.db                     # REAL portfolio mirror (9 tables)
-│   └── oie_paper.db                   # Paper trading portfolio (4 tables, separate)
+│   └── oie_paper.db                   # Paper trading portfolio (4 tables)
 ├── config/
 │   └── rules.yaml                     # Master config: all parameters, thresholds, limits
 ├── src/
@@ -77,132 +68,33 @@ options/
 │   │   ├── models.py                  # Dataclasses: StockSnapshot, OptionSnapshot
 │   │   ├── moomoo_client.py           # Moomoo OpenD data client (quotes + chains)
 │   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro
-│   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, Greeks, GEX)
-│   │   ├── iv_history.py              # IV rank persistence
-│   │   ├── trade_log.py               # TradeLog + DailyRunDB
-│   │   ├── portfolio_db.py            # PortfolioDB (funds, positions, local trades)
-│   │   ├── portfolio_sync.py          # PortfolioSync (poll REAL account, sync orders)
-│   │   ├── oie_db.py                  # OIE paper portfolio DB (separate from real)
+│   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, ADX, HV)
+│   │   ├── oie_db.py                  # OIE paper portfolio DB
 │   │   └── guardrails.py              # Portfolio size/risk limits (shared)
 │   ├── analysis/
-│   │   ├── sentiment.py               # Shared: macro context + ticker sentiment
-│   │   ├── trend.py                   # Trend/momentum indicators
-│   │   ├── options_chain.py           # Options chain analysis
-│   │   └── correlation.py             # Correlation vs V
-│   ├── scoring/                       # WHEEL_SCORE engine (deterministic)
-│   ├── signals/                       # Signal generator + sentiment scoring
-│   ├── risk/                          # Collar check, position monitor
-│   └── config.py                      # Typed config loader from rules.yaml
+│   │   └── sentiment.py               # Shared: macro context + ticker sentiment
+│   ├── config.py                      # Typed config loader from rules.yaml
+│   └── logging_setup.py               # Shared logging → logs/options.log
 ├── scripts/
-│   ├── portfolio.py                   # Portfolio: sync / status / summary / history
-│   ├── daily_run.py                   # Daily pipeline: sync + screen + check + log
+│   ├── portfolio_check.py             # Real portfolio health (moomoo direct read)
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
-│   ├── portfolio_check.py             # Position health: score all holdings
-│   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status)
+│   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status/sim)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
 │   └── market_sentiment.py            # Adhoc: macro + analyst + earnings + news
 ├── tests/
 │   ├── test_oie_db.py                 # OIE paper DB tests (27 tests)
+│   ├── test_oie_simulation.py         # OIE simulation + lifecycle tests (19 tests)
 │   ├── test_screener_scoring.py       # Screener scoring tests (28 tests)
-│   ├── test_scoring.py                # WHEEL_SCORE tests
-│   ├── test_constraints.py            # Constraint gate tests
-│   ├── test_trend.py                  # Trend/momentum formula tests
-│   └── ...                            # Full test suite (328 tests)
+│   └── ...                            # 316 tests total
 ├── specs/                             # Research + architecture docs
 ├── CLAUDE.md                          # AI coding instructions
-└── GOAL.md                            # Investment goals
+├── GOAL.md                            # Investment goals
+└── README.md                          # This file
 ```
 
 ---
 
 ## Scripts
-
-### `portfolio.py` — Portfolio Manager
-
-Pulls REAL account data (funds, positions, executed orders) into local DB. Auto-syncs fills from moomoo — no manual trade entry. **Read-only, never submits orders.**
-
-```bash
-python3 scripts/portfolio.py sync          # Full sync: funds + positions + orders
-python3 scripts/portfolio.py status        # Full portfolio view from DB
-python3 scripts/portfolio.py summary       # Quick one-line numbers
-python3 scripts/portfolio.py history 30    # Fund history over N days
-```
-
-**Options:**
-
-| Command | Needs OpenD? | Description |
-|---------|:---:|-------------|
-| `sync` | ✅ | Polls REAL account via `accinfo_query`, `position_list_query`, `order_list_query`. Writes to `portfolio_snapshots`, `positions`, `local_trades` tables |
-| `status` | ❌ | Reads from DB. Shows funds, 13 stocks, 13 options with P&L |
-| `summary` | ❌ | One line: `Cash=$80 Stocks=13($182K) Options=13 Unrealized=$42K OpenTrades=0` |
-| `history N` | ❌ | Daily fund snapshots: total assets, cash, stock value over N days |
-
-**How sync works:**
-
-```
-portfolio.py sync
-  ├── accinfo_query(REAL) → portfolio_snapshots (total_assets, cash, buying_power)
-  ├── position_list_query(REAL) → positions (code, qty, cost, price, P&L)
-  └── order_list_query(REAL) → local_trades (auto-matched fills)
-        ├── FILLED order → recorded as new OPEN trade
-        └── BUY_BACK order → matches existing OPEN trade → marks CLOSED
-```
-
-**Schedule via cron:**
-```bash
-7 17 * * 1-5 cd ~/options && python3 scripts/portfolio.py sync
-```
-
-Also runs automatically at the start of `daily_run.py`.
-
----
-
-### `daily_run.py` — Daily Pipeline
-
-Single-command daily workflow. Syncs portfolio, screens watchlist, checks positions, logs everything to DB. Runs in ~10 seconds.
-
-```bash
-python3 scripts/daily_run.py                 # Full run
-python3 scripts/daily_run.py --top 5         # Top 5 screener picks
-python3 scripts/daily_run.py --no-external   # Offline (skip yfinance)
-python3 scripts/daily_run.py --archive-chains # Archive option chains for backtesting
-```
-
-**Options:**
-
-| Flag | Description |
-|------|-------------|
-| `--top N` | Number of screener picks to show (default: 10) |
-| `--no-external` | Skip Yahoo Finance — faster, offline |
-| `--archive-chains` | Store full option chains in `run_chains` table (~60s extra, builds historical DB) |
-
-**What it does (in order):**
-
-1. **Portfolio sync** — auto-runs `portfolio.py sync` (funds + positions + orders)
-2. **Macro snapshot** — VIX, VVIX, DXY, yields, credit spreads, Fear & Greed, regime score
-3. **Watchlist screening** — scores all tickers, finds best CC/CSP candidates
-4. **Portfolio check** — scores all open stocks + options, generates buy/sell/hold/close/roll decisions
-5. **Execution summary** — what to open, close, roll
-6. **Logs to DB** — `daily_runs`, `run_signals`, `run_positions`, `run_chains`
-
-**Output example:**
-```
-🌍 VIX 15.8 | CAUTIOUS | Size: 50% | 10Y 4.6%
-
-🔍 SCREENING 11 TICKERS
-  🎯 TOP 5 PICKS:
-   # Ticker   Strat  Score    Strike       Expiry  DTE      Δ     Bid    RoC     IV     OI
-   1 NVDA       CC   2.6 $  220.00   2026-08-14  36 0.316 $  5.00  24.8%  41.1%  1,045
-   2 AVGO       CSP  2.8 $  350.00   2026-08-21  43 0.244 $ 10.95  26.6%  52.3%  5,569
-   ...
-
-📋 EXECUTION SUMMARY
-  🟢 OPEN (5 candidates): CC NVDA $220, CSP AVGO $350, ...
-  🔴 CLOSE (3 positions): V C380 ✅, AVGO P350 ✅
-  🟡 ROLL (1 position): MU P790 ⚠️
-```
-
----
 
 ### `screener.py` — Watchlist Screener
 
@@ -1182,24 +1074,6 @@ Technical  Options  Fund    DTE     OI     Spread   Concen-  Cash    Daily
 
 ---
 
-## Database — `db/options.db`
-
-Single SQLite file. All tables in one place. No fragmentation.
-
-| Table | Purpose | Populated By |
-|-------|---------|-------------|
-| `portfolio_snapshots` | Fund history (total_assets, cash, buying_power) | `portfolio.py sync` |
-| `positions` | Current stock + option holdings with P&L | `portfolio.py sync` |
-| `local_trades` | Auto-synced executed orders from moomoo | `portfolio.py sync` |
-| `trade_log` | Trade lifecycle: recommendations → fills → P&L | `daily_run.py` |
-| `daily_runs` | Run metadata (VIX, regime, yields, macro) | `daily_run.py` |
-| `run_signals` | Screener output per run | `daily_run.py` |
-| `run_positions` | Position health per run | `daily_run.py` |
-| `run_chains` | Options chain snapshots (backtest-ready) | `daily_run.py --archive-chains` |
-| `iv_history` | Daily IV per ticker (IV Rank source) | `iv_history.py` |
-
-Run daily — builds your own historical options dataset for backtesting.
-
 ---
 
 ## Library Modules
@@ -1217,13 +1091,13 @@ Used by `screener.py`, `portfolio_check.py`, `daily_run.py`, and `market_sentime
 | `score_news_sentiment(score)` | `float (0-1)` | Normalize 1-100 news score to 0-1 |
 | `score_earnings_blackout(dte)` | `(bool, float)` | Blackout check + penalty |
 
-### `src/data/portfolio_db.py` — PortfolioDB
+### `src/data/oie_db.py` — Paper Portfolio DB
 
-CRUD for `portfolio_snapshots`, `positions`, `local_trades` tables. Methods: `save_funds()`, `save_positions()`, `log_trade()`, `close_trade()`, `get_portfolio_summary()`, `get_funds_history()`.
+CRUD for `paper_positions`, `paper_trades`, `paper_snapshots`, `paper_state` tables. Methods: `open_position()`, `close_position()`, `expire_position()`, `assign_position()`, `get_active_positions()`, `save_snapshot()`.
 
-### `src/data/portfolio_sync.py` — PortfolioSync
+### `src/data/guardrails.py` — GuardrailChecker
 
-Polls REAL moomoo account (`accinfo_query`, `position_list_query`, `order_list_query`). Auto-matches executed orders to local trades. Read-only — never submits.
+Position sizing, sector concentration, cash buffer, CSP stress test. Shared by screener and OIE engine. Instantiate with any portfolio — real or paper.
 
 ---
 

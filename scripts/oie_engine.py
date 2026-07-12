@@ -656,7 +656,6 @@ class OIEEngine:
             return candidates
 
         watchlist = _fetch_live_watchlist(self.moomoo)
-        existing_options = self.db.get_open_option_tickers()
         cash = float(self.db.get_state('cash', '0'))
         fund = float(self.db.get_state('fund', '0'))
 

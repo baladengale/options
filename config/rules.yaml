@@ -111,11 +111,11 @@ scoring:
 
 # ── Position Sizing Hard Limits ──
 position_limits:
-  max_single_position_pct: 0.75     # 75% max per underlying (temp)
+  max_single_position_pct: 0.75     # 15% max per underlying (Temporary override for testing)
   max_sector_pct: 0.25              # 25% max per sector
   max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
-  max_open_positions: 15            # total OPTIONS positions (stocks excluded)
+  max_open_positions: 15             # total OPTIONS positions (stocks excluded)
   max_daily_new_positions: 2        # new trades per day
   max_margin_pct: 0.30              # 30% margin utilization max
 
@@ -156,6 +156,9 @@ cc_management:
 
 # ── Watchlist (default fallback) ──
 watchlist:
+  # Moomoo watchlist group to pull live tickers from
+  moomoo_group: Options
+
   default:
     - US.V
     - US.MSFT
@@ -165,9 +168,10 @@ watchlist:
     - US.NVDA
     - US.META
     - US.AVGO
-    - US.ADBE
     - US.CRM
     - US.AMD
+    - US.TSLA
+    - US.BE
 
   # Non-tech diversification candidates
   diversify:

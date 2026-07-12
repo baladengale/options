@@ -2,6 +2,13 @@
 db/*.db
 db/*.sqlite
 db/*.sqlite3
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+
+# Logs — never commit
+logs/
+*.log
 
 # Python
 __pycache__/
