@@ -78,7 +78,7 @@ def main():
                 if history:
                     enrich_stock_snapshot(snap, history)
                 score = _score_holding(snap, ticker, yf_client, regime, regime_mult)
-                best_cc = _find_best_cc(moomoo, ticker, snap, qty, yf_client, regime, regime_mult)
+                best_cc = _find_best_cc(moomoo, ticker, snap, qty, cost, yf_client, regime, regime_mult)
                 if best_cc:
                     dec = f"SELL CC ${best_cc['strike']:.0f} {best_cc['expiry']} @ {best_cc['roc']:.1f}%"
                     actionable = True
@@ -375,8 +375,10 @@ def _score_holding(snap, ticker: str, yf_client, regime: str, regime_mult: float
     return max(1.0, min(10.0, score))
 
 
-def _find_best_cc(moomoo, ticker: str, snap, shares: float, yf_client, regime: str, regime_mult: float) -> Optional[dict]:
-    """Find best covered call candidate for a stock holding."""
+def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
+                  yf_client, regime: str, regime_mult: float) -> Optional[dict]:
+    """Find best covered call candidate for a stock holding.
+    GOAL.md rule: Never sell CC below cost basis."""
     if shares < 100:
         return None
 
@@ -386,6 +388,9 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, yf_client, regime: s
 
     for c in contracts:
         if c.option_type != 'CALL':
+            continue
+        # GOAL.md: Never sell CC below cost basis
+        if c.strike <= cost_basis:
             continue
         if (c.bid or 0) <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
             continue
