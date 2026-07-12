@@ -1,0 +1,17 @@
+[Unit]
+Description=Options Income Engine (OIE) — Paper Trading
+After=network.target
+
+[Service]
+Type=simple
+User=swara
+WorkingDirectory=/home/swara/options
+Environment=OPTIONS_HOME=/home/swara/options
+ExecStart=/usr/bin/python3 scripts/oie_engine.py run --interval 30 --skip-closed
+Restart=always
+RestartSec=60
+StandardOutput=append:/home/swara/options/logs/oie.log
+StandardError=append:/home/swara/options/logs/oie.log
+
+[Install]
+WantedBy=multi-user.target

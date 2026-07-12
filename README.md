@@ -1352,6 +1352,105 @@ At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE.
 
 ---
 
+## Deployment
+
+### Prerequisites
+
+| Component | Required | Notes |
+|-----------|:--------:|-------|
+| **Python 3.9+** | ✅ | System or venv |
+| **moomoo OpenD** | ✅ | Running on `127.0.0.1:11111` |
+| **Python packages** | ✅ | `pip install moomoo-api yfinance pandas` |
+| **Git** | ⚠️ | For updates only |
+
+### Quick Deploy (any Linux/macOS server)
+
+```bash
+# 1. Clone the project
+git clone <repo-url> options
+cd options
+
+# 2. Install dependencies
+pip install moomoo-api yfinance pandas
+
+# 3. Set project home (optional — auto-detected)
+export OPTIONS_HOME=/path/to/options
+
+# 4. Verify installation
+python3 scripts/oie_engine.py test
+# Expected: "✅ ALL CHECKS PASSED"
+
+# 5. Seed paper portfolio from REAL account (needs OpenD running)
+python3 scripts/oie_engine.py init
+
+# 6. Run first cycle
+python3 scripts/oie_engine.py once --force --no-external
+
+# 7. Start continuous mode
+python3 scripts/oie_engine.py run --interval 30
+```
+
+### Path Configuration
+
+All paths are resolved from `OPTIONS_HOME` env var. If not set, auto-detected from the script location.
+
+```
+OPTIONS_HOME=/path/to/options
+├── db/oie_paper.db       # Paper portfolio (auto-created)
+├── logs/options.log      # All activity logs (auto-created)
+├── config/rules.yaml     # Master configuration
+└── scripts/              # Entry points
+```
+
+To relocate the project, just set `OPTIONS_HOME`:
+
+```bash
+export OPTIONS_HOME=/opt/trading/options
+python3 /opt/trading/options/scripts/oie_engine.py status
+```
+
+### Server Cron Setup
+
+```bash
+crontab -e
+
+# Paper engine — every 30 min during US market hours
+*/30 13-20 * * 1-5 cd /path/to/options && python3 scripts/oie_engine.py once --skip-closed >> logs/cron.log 2>&1
+
+# Daily status snapshot
+0 21 * * 1-5 cd /path/to/options && python3 scripts/portfolio_check.py --no-external >> logs/daily_check.log 2>&1
+```
+
+### tmux Session (persistent)
+
+```bash
+# Start
+tmux new -s oie
+export OPTIONS_HOME=/path/to/options
+python3 scripts/oie_engine.py run --interval 30
+
+# Detach: Ctrl+B, D
+# Reattach: tmux attach -t oie
+```
+
+### Health Checks
+
+```bash
+# Self-test (works offline)
+python3 scripts/oie_engine.py test
+
+# Portfolio health (needs OpenD)
+python3 scripts/portfolio_check.py --no-external
+
+# Paper engine status
+python3 scripts/oie_engine.py status
+
+# Recent activity
+tail -50 logs/options.log
+```
+
+---
+
 ## Data Sources
 
 | Source | What | Key Required? |

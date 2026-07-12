@@ -676,8 +676,9 @@ class OIEEngine:
         log.info(f"OIE_SCAN|tickers={len(watchlist)}|regime={regime}|"
                  f"cash=${cash:,.0f}|force={self.force}|dry={self.dry_run}")
 
-        # ── OPTIMIZATION 1: Batch all stock snapshots (1 call vs N) ──
-        all_snaps = self.moomoo.get_stock_snapshots(watchlist)
+        # ── OPTIMIZATION 1: Batch all stock snapshots (watchlist + portfolio) ──
+        all_tickers = list(set(watchlist + [f'US.{t}' for t in self._real_portfolio.keys()]))
+        all_snaps = self.moomoo.get_stock_snapshots(all_tickers)
         snap_map = {}
         for s in all_snaps:
             snap_map[s.ticker] = s
@@ -685,8 +686,13 @@ class OIEEngine:
         # ── OPTIMIZATION 2: SPY history cached (first fetch only) ──
         spy_history = self.moomoo.get_price_history('US.SPY', 252)
 
-        # Options-only NLV (stocks tracked outside engine)
-        net_liq = cash + fund
+        # NLV = cash + fund + real stock market value (for accurate concentration %)
+        stock_mv = 0.0
+        for t, qty in self._real_portfolio.items():
+            snap = snap_map.get(f'US.{t}')
+            if snap and snap.last_price > 0:
+                stock_mv += qty * snap.last_price
+        net_liq = cash + fund + stock_mv
 
         # ── OPTIMIZATION 4: Pre-filter tickers ──
         viable = []

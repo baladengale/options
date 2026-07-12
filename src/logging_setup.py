@@ -5,12 +5,10 @@ Writes to logs/ directory. Each module gets its own logger.
 import logging
 import os
 import sys
-
-LOG_DIR = os.path.join(os.path.dirname(__file__), '..', 'logs')
-os.makedirs(LOG_DIR, exist_ok=True)
+from src.paths import LOG_DIR, LOG_PATH
 
 # Root logger — file gets everything, console gets INFO+
-_file_handler = logging.FileHandler(os.path.join(LOG_DIR, 'options.log'))
+_file_handler = logging.FileHandler(LOG_PATH)
 _file_handler.setLevel(logging.DEBUG)
 _file_handler.setFormatter(logging.Formatter(
     '%(asctime)s [%(name)s] %(levelname)s %(message)s'))

@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'db', 'oie_paper.db')
+from src.paths import OIE_DB_PATH as DB_PATH
 
 
 class OIEDB:
@@ -389,12 +389,13 @@ class OIEDB:
         return {r['ticker'] for r in rows}
 
     def get_daily_new_count(self) -> int:
-        """New positions opened today."""
+        """New positions opened by the engine today (excludes SEED)."""
         today = datetime.now().isoformat()[:10]
+        seeded_at = self.get_state('seeded_at', '')
         row = self._conn.execute(
-            "SELECT COUNT(*) as cnt FROM paper_positions "
-            "WHERE entry_date=? AND pos_type IN ('CALL','PUT')",
-            (today,)
+            "SELECT COUNT(*) as cnt FROM paper_trades "
+            "WHERE ts LIKE ? AND event LIKE 'OPEN_%' AND ts > ?",
+            (f'{today}%', seeded_at)
         ).fetchone()
         return row['cnt'] if row else 0
 
