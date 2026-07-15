@@ -414,6 +414,35 @@ class OIEEngine:
                         else:
                             close_reason = 'EXPIRE'
 
+                # ── Stop-Loss Checks (automated) ──
+                # Only evaluate if no profit/expiry close_reason already set
+                if not close_reason:
+                    delta = abs(pos.get('current_delta', 0) or 0)
+                    strategy = 'CC' if pos_type == 'CALL' else 'CSP'
+                    pnl_dollars = (entry - current_bid) * qty * 100  # negative = loss
+                    loss_multiple = abs(profit_captured) / 100 if profit_captured < 0 else 0
+
+                    # Layer 2: Delta gates (from config/rules.yaml)
+                    if strategy == 'CSP' and delta >= 0.60:
+                        close_reason = 'STOP_DELTA'
+                    elif strategy == 'CC' and delta >= 0.50:
+                        # CC assignment is often desired — warn but don't auto-close
+                        events.append(f'⚠️  {ticker} CC ${strike:.0f} Δ={delta:.2f} — assignment risk,'
+                                    f' prepare shares (not auto-closing)')
+
+                    # Layer 1: Premium multiple stops, DTE-adjusted
+                    if not close_reason and profit_captured < 0:
+                        if dte > 30 and loss_multiple >= 3.0:
+                            close_reason = 'STOP_LOSS'
+                        elif 21 < dte <= 30 and loss_multiple >= 2.0:
+                            close_reason = 'STOP_LOSS'
+                        elif dte <= 21 and loss_multiple >= 1.5:
+                            close_reason = 'STOP_LOSS'
+
+                    # Heavy loss catch-all ($1,000 absolute)
+                    if not close_reason and pnl_dollars < -1000:
+                        close_reason = 'STOP_LOSS'
+
                 if close_reason:
                     if close_reason in ('EXPIRE',):
                         pnl = self.db.expire_position(pos_id)
@@ -430,6 +459,17 @@ class OIEEngine:
                         self.db.assign_position(pos_id, 'CSP', stock_prices.get(ticker, strike))
                         cash -= strike * qty * 100
                         events.append(f'📉 {ticker} CSP ${strike:.0f} ASSIGNED: {qty*100} shares added')
+                        closed_trades += 1
+                    elif close_reason in ('STOP_DELTA', 'STOP_LOSS'):
+                        # Stop-loss close
+                        pnl = self.db.close_position(pos_id, current_bid, close_reason,
+                                                     cash_impact=current_bid * qty * 100)
+                        cash -= current_bid * qty * 100  # pay to close
+                        loss_str = f'{loss_multiple:.1f}x premium' if profit_captured < 0 else ''
+                        log.info(f"STOP {ticker} {pos_type} ${strike:.0f} {close_reason}: "
+                                f"Δ={delta:.2f} loss={loss_str} P&L=${pnl:,.2f}")
+                        events.append(f'🛑 {ticker} {pos_type} ${strike:.0f} {close_reason}: '
+                                    f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f}')
                         closed_trades += 1
                     else:
                         # Profit target close
@@ -1083,7 +1123,7 @@ def main():
     sim_open.add_argument('--premium', type=float, required=True, help='Premium per contract')
     sim_open.add_argument('--contracts', type=int, default=1, help='Number of contracts')
     sim_open.add_argument('--delta', type=float, default=0.25, help='Option delta')
-    sim_open.add_argument('--iv', type=float, default=30, help='Implied volatility %')
+    sim_open.add_argument('--iv', type=float, default=30, help='Implied volatility %%')
 
     sim_close = sim_sub.add_parser('close', help='Close a paper position')
     sim_close.add_argument('pos_id', type=int, help='Position ID to close')

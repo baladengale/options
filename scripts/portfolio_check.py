@@ -510,7 +510,7 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             decision = '⚠️  EARNINGS IN DTE — close before'
 
     # Heavy loss catch-all
-    if pl < -500 and 'STOP' not in decision:
+    if pl < -1000 and 'STOP' not in decision:
         score += 1.5
         if 'CLOSE' not in decision:
             decision = '🔴 UNDERWATER — evaluate exit'

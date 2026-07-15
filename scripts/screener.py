@@ -456,8 +456,8 @@ def main():
               f"${c.capital_required:>9,.0f}  {c.reason[:45]}")
 
     # ── Summary insight ──
-    print(f"\n  💡 Best CSP: {_best_of(candidates, 'CSP')}")
-    print(f"  💡 Best CC:  {_best_of(candidates, 'CC')}")
+    print(f"\n  💡 Best CSP: {_best_of(top, 'CSP')}")
+    print(f"  💡 Best CC:  {_best_of(top, 'CC')}")
 
     if regime in ('VOLATILE', 'BEARISH'):
         print(f"  ⚠️  {regime} regime — favor CC over CSP, reduce position size by 25-50%")

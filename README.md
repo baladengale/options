@@ -11,24 +11,33 @@ Covered Call & Cash Secured Put screening, scoring, and portfolio management.
 ## Quick Start
 
 ```bash
+# Activate the virtual environment (first time: python3 -m venv .venv)
+source .venv/bin/activate
+
+# Install dependencies (first time only)
+pip install -r requirements.txt
+
 # 1. Check real portfolio health (reads moomoo directly — no DB needed)
 python3 scripts/portfolio_check.py
 
-# 2. Screen for best option trades (CC + CSP)
+# 2. Full portfolio summary — positions, order history, all-time option P&L
+python3 scripts/portfolio_summary.py
+
+# 3. Screen for best option trades (CC + CSP)
 python3 scripts/screener.py --top 10 --force
 
-# 3. Paper trading engine (validate strategy before live execution)
+# 4. Paper trading engine (validate strategy before live execution)
 python3 scripts/oie_engine.py init          # Once: seed paper portfolio from REAL
 python3 scripts/oie_engine.py once --force  # Run one cycle, see what it does
 python3 scripts/oie_engine.py status        # Check paper portfolio anytime
 python3 scripts/oie_engine.py run           # Continuous mode (30-min cycles)
 
-# 4. Adhoc research
+# 5. Adhoc research
 python3 scripts/market_data.py NVDA --options
 python3 scripts/market_sentiment.py
 ```
 
-**Prerequisites**: OpenD running on `127.0.0.1:11111`. Install: `pip3 install moomoo-api yfinance pandas`.
+**Prerequisites**: OpenD running on `127.0.0.1:11111`. Python 3.9+ with venv: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
 
 **One database, one engine:**
 - `db/oie_paper.db` — your **paper** trading portfolio (simulated by the OIE engine)
@@ -77,6 +86,7 @@ options/
 │   └── logging_setup.py               # Shared logging → logs/options.log
 ├── scripts/
 │   ├── portfolio_check.py             # Real portfolio health (moomoo direct read)
+│   ├── portfolio_summary.py           # Full portfolio + order history + option P&L
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
 │   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status/sim)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
@@ -150,8 +160,8 @@ python3 scripts/screener.py --log             # Log picks to trade_log table
 Scores every open stock and option position. Gives decisions: sell CC, close at 50% profit, roll underwater, hold.
 
 ```bash
-python3 scripts/portfolio_check.py                # Full check
-python3 scripts/portfolio_check.py --no-external  # Offline mode
+source .venv/bin/activate && python3 scripts/portfolio_check.py                # Full check
+source .venv/bin/activate && python3 scripts/portfolio_check.py --no-external  # Offline mode (skip yfinance)
 ```
 
 **Options:**
@@ -194,6 +204,33 @@ python3 scripts/portfolio_check.py --no-external  # Offline mode
   US.V260821C380000           -1   43  +0.170 $   5.15 $   2.42 $   255.50  +49.6%    53.0%    3.5  ✅ CLOSE (50%+ profit)
   US.GOOG260717P335000        -1    8  -0.154 $   1.22 $   1.43 $   -33.00  -27.0%   -17.2%    6.0  ⚠️  UNDERWATER
 ```
+
+---
+
+### `portfolio_summary.py` — Full Portfolio & Order History
+
+Comprehensive portfolio overview: all positions, complete order history, all-time option income, monthly breakdowns, and sector concentration. Pulls live data from moomoo OpenD — no DB needed.
+
+```bash
+source .venv/bin/activate && python3 scripts/portfolio_summary.py
+```
+
+**What it shows:**
+
+| Section | Description |
+|---------|-------------|
+| Account Summary | Cash, fund assets, buying power, margin, total assets |
+| Stock Positions | Every holding with cost basis, market value, P&L, P&L% |
+| Option Positions | Every contract with DTE, strike, cost, current P&L |
+| Order History | All filled/cancelled orders pulled from moomoo history |
+| Overall Summary | NLV, unrealized P&L, all-time option income, net P&L |
+| Monthly Breakdown | Premium collected vs buybacks by month |
+| Sector Breakdown | Concentration per sector with visual bars |
+
+**Key metrics computed:**
+- **Net Option Income** = Premium Collected − Buybacks Paid (all-time)
+- **Total Gain** = Realized Option Income + Unrealized Stock P&L + Unrealized Option P&L
+- **CSP Liability** = total cash required if all puts assigned at strike
 
 ---
 
@@ -1360,7 +1397,7 @@ At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE.
 |-----------|:--------:|-------|
 | **Python 3.9+** | ✅ | System or venv |
 | **moomoo OpenD** | ✅ | Running on `127.0.0.1:11111` |
-| **Python packages** | ✅ | `pip install moomoo-api yfinance pandas` |
+| **Python packages** | ✅ | `source .venv/bin/activate && pip install -r requirements.txt` |
 | **Git** | ⚠️ | For updates only |
 
 ### Quick Deploy (any Linux/macOS server)
@@ -1370,8 +1407,10 @@ At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE.
 git clone <repo-url> options
 cd options
 
-# 2. Install dependencies
-pip install moomoo-api yfinance pandas
+# 2. Create venv and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
 # 3. Set project home (optional — auto-detected)
 export OPTIONS_HOME=/path/to/options

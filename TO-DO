@@ -1,11 +1,7 @@
-┌──────┬────────┬────────┬──────┬───────────────────────────┐
-│ Slot │ Strike │ Expiry │  Δ   │        Assignment         │
-├──────┼────────┼────────┼──────┼───────────────────────────┤
-│  1   │ $355   │ Jul 31 │ 0.42 │ V at $349, needs 2% rally │
-├──────┼────────┼────────┼──────┼───────────────────────────┤
-│  2   │ $350   │ Aug 21 │ 0.52 │     Realistic, 1% OTM     │
-├──────┼────────┼────────┼──────┼───────────────────────────┤
-│  3   │ $360   │ Sep 18 │ 0.43 │     Wait for recovery     │
-├──────┼────────┼────────┼──────┼───────────────────────────┤
-│  4   │ $350   │ Jul 24 │ 0.50 │    Quick, pre-earnings    │
-└──────┴────────┴────────┴──────┴───────────────────────────┘
+Show proper P&L with script
+
+alias portfolio_check="source /Users/bala/workspace/options/.venv/bin/activate && /Users/bala/workspace/options/portfolio_check.py"
+alias portfolio_summary="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/portfolio_summary.py"
+alias oie="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/oie_engine.py"
+alias screener="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/screener.py"
+alias market_sentiment.py="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/market_sentiment.py.py"

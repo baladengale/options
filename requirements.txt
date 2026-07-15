@@ -1,0 +1,4 @@
+moomoo-api>=10.8
+yfinance>=1.5
+pandas>=3.0
+pyyaml>=6.0
