@@ -171,8 +171,7 @@ class GuardrailChecker:
                 r.warnings.append(f"{sec} sector at {pct:.1f}% > {self.MAX_SECTOR_PCT()*100:.0f}% limit.")
 
         # ── Worst-case assignment stress test ──
-        csp_total = sum(p.get('csp_liability', 0) for p in self._positions
-                        if p.get('strategy') in ('CSP', 'CASH_SECURED_PUT'))
+        csp_total = sum(p.get('csp_liability', 0) for p in self._positions)
         r.worst_case_assignment = csp_total
         available = self._cash + self._bp * 0.5  # cash + 50% of BP as margin buffer
         r.worst_case_shortfall = csp_total - available
