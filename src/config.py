@@ -220,8 +220,36 @@ class Config:
         return self._data['stop_loss']['delta']['csp_critical']
 
     @property
+    def stop_delta_csp_decision(self) -> float:
+        return self._data['stop_loss']['delta'].get('csp_decision', 0.40)
+
+    @property
     def stop_delta_cc_critical(self) -> float:
         return self._data['stop_loss']['delta']['cc_critical']
+
+    @property
+    def stop_delta_cc_warn(self) -> float:
+        return self._data['stop_loss']['delta'].get('cc_warn', 0.40)
+
+    # ═══════════════════════════════════════════════════════════
+    # ROLLING DISCIPLINE
+    # ═══════════════════════════════════════════════════════════
+
+    def rolling(self, key: str, default=None):
+        """Get rolling-discipline parameter. e.g., rolling('max_rolls_per_campaign') → 2"""
+        return self._data.get('rolling', {}).get(key, default)
+
+    # ═══════════════════════════════════════════════════════════
+    # HOLDINGS EXIT FRAMEWORK
+    # ═══════════════════════════════════════════════════════════
+
+    def holdings_exit(self, key: str, default=None):
+        """Get holdings-exit parameter. e.g., holdings_exit('backstop_hard_pct') → 0.40"""
+        return self._data.get('holdings_exit', {}).get(key, default)
+
+    def thesis_gate(self, key: str, default=None):
+        """Get thesis-gate threshold. e.g., thesis_gate('debt_ebitda_max') → 4.5"""
+        return self._data.get('holdings_exit', {}).get('thesis', {}).get(key, default)
 
     # ═══════════════════════════════════════════════════════════
     # CC MANAGEMENT

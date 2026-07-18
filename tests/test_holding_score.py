@@ -1,0 +1,189 @@
+"""Tests for src/scoring/holding_score.py — position decision engine."""
+
+from datetime import date
+
+import pytest
+
+from src.data.models import StockSnapshot, OptionSnapshot
+from src.scoring.holding_score import (
+    _score_holding, _score_option, _find_best_cc, _OptionCurrent,
+)
+
+
+TODAY = date.today()
+
+
+def _opt(dte=40, delta=-0.20, bid=5.0):
+    """Build a lightweight _OptionCurrent with the fields _score_option reads."""
+    return _OptionCurrent({
+        'bid_price': bid, 'ask_price': bid + 0.5, 'last_price': bid,
+        'option_delta': delta, 'option_gamma': 0.0,
+        'option_implied_volatility': 30, 'option_open_interest': 1000,
+        'volume': 200, 'option_expiry_date_distance': dte,
+        'option_strike_price': 100, 'option_type': 'PUT',
+    })
+
+
+def _pos(ticker='AVGO', type='PUT', strike=350.0, expiry='2099-01-01', qty=-1, cost=11.2):
+    return {'ticker': ticker, 'type': type, 'strike': strike, 'expiry': expiry,
+            'qty': qty, 'cost': cost, 'pl': 0.0, 'pl_pct': 0.0}
+
+
+# ── _score_option decision matrix ────────────────────────────────
+
+def test_option_70pct_profit_close():
+    s, dec = _score_option(_pos(), _opt(dte=40), profit_captured=75.0, pl=700,
+                           today=TODAY, yf_client=None)
+    assert 'CLOSE' in dec and '70%' in dec
+    assert s <= 3.0   # strongly improved
+
+
+def test_option_50pct_profit_close():
+    s, dec = _score_option(_pos(), _opt(dte=40), profit_captured=55.0, pl=500,
+                           today=TODAY, yf_client=None)
+    assert 'CLOSE' in dec and '50%' in dec
+
+
+def test_option_csp_delta_stop():
+    # CSP, |delta| >= 0.60 → stop / assignment decision
+    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.65), profit_captured=10.0,
+                           pl=0, today=TODAY, yf_client=None)
+    assert 'roll' in dec or 'assignment' in dec or 'STOP' in dec or 'exit' in dec
+    assert s >= 7.0
+
+
+def test_option_far_dte_3x_stop_tier():
+    # Underwater 3× loss, >30 DTE → 3× STOP TIER
+    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-300.0,
+                           pl=-3000, today=TODAY, yf_client=None)
+    assert '3× STOP TIER' in dec
+    assert s >= 7.0
+
+
+def test_option_near_dte_15x_stop_gamma():
+    # Underwater 1.5× loss, <=21 DTE → 1.5× STOP TIER (gamma)
+    s, dec = _score_option(_pos(), _opt(dte=10, delta=-0.20), profit_captured=-150.0,
+                           pl=-1500, today=TODAY, yf_client=None)
+    assert '1.5× STOP TIER' in dec
+    assert s >= 7.0
+
+
+def test_option_heavy_loss_catchall():
+    # pl < -1000 with no stronger trigger → UNDERWATER evaluate exit
+    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-5.0,
+                           pl=-1500, today=TODAY, yf_client=None)
+    assert 'UNDERWATER' in dec
+
+
+def test_option_normal_hold():
+    # Healthy CSP, mid-DTE, small profit → HOLD-ish, score near neutral
+    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=10.0,
+                           pl=100, today=TODAY, yf_client=None)
+    assert 1.0 <= s <= 10.0
+    assert 'HOLD' in dec or 'monitor' in dec.lower() or 'captured' in dec.lower() or '21 DTE' in dec
+
+
+def test_option_score_always_in_range():
+    """No combination of inputs should push the score outside 1-10."""
+    for pc in (-400, -200, -50, 0, 30, 60, 90):
+        for dte in (1, 5, 14, 21, 40, 90):
+            for d in (-0.7, -0.45, -0.2, -0.05):
+                s, _ = _score_option(_pos(), _opt(dte=dte, delta=d),
+                                     profit_captured=pc, pl=-5000,
+                                     today=TODAY, yf_client=None)
+                assert 1.0 <= s <= 10.0, f"score {s} out of range for pc={pc} dte={dte} d={d}"
+
+
+# ── _score_holding ───────────────────────────────────────────────
+
+def _snap(**kw):
+    base = dict(ticker='X', name='X', last_price=100, rsi_14=50,
+                sma_50=98, sma_200=95, volume_ratio=1.0)
+    base.update(kw)
+    return StockSnapshot(**base)
+
+
+def test_holding_neutral_scores_mid():
+    s = _score_holding(_snap(), 'X', yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    assert 1.0 <= s <= 10.0
+
+
+def test_holding_bearish_regime_penalizes():
+    s_neutral = _score_holding(_snap(), 'X', yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    s_bear = _score_holding(_snap(), 'X', yf_client=None, regime='BEARISH', regime_mult=1.0)
+    assert s_bear > s_neutral
+
+
+def test_holding_uptrend_improves_score():
+    s_down = _score_holding(_snap(sma_50=98, sma_200=95, last_price=90), 'X',
+                            yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    s_up = _score_holding(_snap(sma_50=98, sma_200=95, last_price=120), 'X',
+                          yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    assert s_up < s_down
+
+
+# ── _find_best_cc ────────────────────────────────────────────────
+
+class FakeMoomoo:
+    """Only implements get_option_snapshots — returns a canned chain."""
+    def __init__(self, contracts):
+        self._contracts = contracts
+
+    def get_option_snapshots(self, ticker, dte_min=7, dte_max=60):
+        return self._contracts
+
+
+def _cc(strike, bid, delta, dte=40, oi=1000, vol=200, iv=30):
+    return OptionSnapshot(
+        code=f'C{strike}', name='c', underlying='X', option_type='CALL',
+        strike=strike, expiry='2099-01-01', dte=dte, area_type='AMERICAN',
+        bid=bid, ask=bid + 0.2, open_interest=oi, volume=vol,
+        implied_vol=iv, delta=delta)
+
+
+def test_find_best_cc_picks_lowest_penalty():
+    snap = _snap(last_price=100)
+    moomoo = FakeMoomoo([
+        _cc(strike=105, bid=2.0, delta=0.30, dte=40),   # optimal DTE, decent roc
+        _cc(strike=110, bid=0.5, delta=0.16, dte=10),   # short DTE penalty, low roc
+        _cc(strike=120, bid=0.0, delta=0.10),           # filtered (bid<=0 / delta<0.15)
+    ])
+    best = _find_best_cc(moomoo, 'X', snap, shares=200, cost_basis=90,
+                         yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    assert best is not None
+    assert best['strike'] == 105
+
+
+def test_find_best_cc_respects_above_basis():
+    """Without allow_below_basis, strikes <= cost_basis are excluded."""
+    snap = _snap(last_price=100)
+    moomoo = FakeMoomoo([
+        _cc(strike=95, bid=5.0, delta=0.30),    # below basis → excluded
+        _cc(strike=110, bid=2.0, delta=0.25),   # above basis → ok
+    ])
+    best = _find_best_cc(moomoo, 'X', snap, shares=200, cost_basis=100,
+                         yf_client=None, regime='NEUTRAL', regime_mult=1.0)
+    assert best['strike'] == 110
+
+
+def test_find_best_cc_allows_below_basis_when_flagged():
+    snap = _snap(last_price=100)
+    moomoo = FakeMoomoo([_cc(strike=90, bid=5.0, delta=0.30)])
+    best = _find_best_cc(moomoo, 'X', snap, shares=200, cost_basis=100,
+                         yf_client=None, regime='NEUTRAL', regime_mult=1.0,
+                         allow_below_basis=True)
+    assert best is not None and best['strike'] == 90
+
+
+def test_find_best_cc_none_if_under_100_shares():
+    snap = _snap(last_price=100)
+    moomoo = FakeMoomoo([_cc(strike=110, bid=2.0, delta=0.25)])
+    assert _find_best_cc(moomoo, 'X', snap, shares=50, cost_basis=90,
+                         yf_client=None, regime='NEUTRAL', regime_mult=1.0) is None
+
+
+def test_find_best_cc_none_if_no_qualified_contract():
+    snap = _snap(last_price=100)
+    moomoo = FakeMoomoo([_cc(strike=110, bid=0.05, delta=0.25)])  # bid too low
+    assert _find_best_cc(moomoo, 'X', snap, shares=200, cost_basis=90,
+                         yf_client=None, regime='NEUTRAL', regime_mult=1.0) is None

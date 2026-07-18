@@ -36,6 +36,7 @@ from src.logging_setup import get_logger
 log = get_logger('screener')
 
 from src.data.moomoo_client import MoomooClient
+from src.data.portfolio_loader import fetch_portfolio
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
 from src.data.models import StockSnapshot, OptionSnapshot
@@ -45,7 +46,16 @@ from src.analysis.sentiment import (
 )
 from src.config import get_config
 
-_cfg = None  # lazy-loaded config
+# Scoring engine now lives in src/ — re-exported here so scripts/oie_engine.py and
+# tests/test_screener_scoring.py can keep importing these names from scripts.screener
+# (single source of truth, no behavior change).
+from src.scoring.screener_score import (
+    _cfg_val,
+    _compute_ticker_score, _contract_penalty, _trend_composite,
+    _score_technical, _score_options_eco, _score_fundamental,
+    _score_external, _score_macro, _csp_roc,
+    _score_stars, _reason, _compute_chain_gex, _regime_multiplier,
+)
 
 # Watchlist from CLAUDE.md
 # Default watchlist (used if moomoo watchlist fetch fails)
@@ -53,13 +63,6 @@ _DEFAULT_WATCHLIST = [
     'US.V', 'US.MSFT', 'US.GOOGL', 'US.AAPL', 'US.AMZN',
     'US.NVDA', 'US.META', 'US.AVGO', 'US.ADBE', 'US.CRM', 'US.AMD',
 ]
-
-def _cfg_val(getter, default=None):
-    """Lazy config access — loads once, cached."""
-    global _cfg
-    if _cfg is None:
-        _cfg = get_config()
-    return getter(_cfg) if default is None else getter(_cfg)
 
 
 def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max: int = 90) -> list:
@@ -99,63 +102,16 @@ def _fetch_live_watchlist(moomoo) -> list[str]:
 
 
 def _fetch_live_portfolio() -> tuple[dict[str, float], float, float, float, set[str]]:
-    """Pull live portfolio positions, cash, buying power, fund_assets. Fallback to defaults.
-    Returns (stock_holdings, cash, buying_power, fund, existing_option_tickers)."""
-    fund_usd = 0.0
-    try:
-        trd = OpenSecTradeContext(host='127.0.0.1', port=11111, ai_type=1)
-        ret, acc_list = trd.get_acc_list()
-        if ret != RET_OK:
-            trd.close()
-            return {}, 817.0, 48638.89, 48500.0, set()
-
-        for _, acc in acc_list.iterrows():
-            # trd_env is returned as string 'REAL' or 'SIMULATE'
-            trd_env_raw = acc.get('trd_env', 'SIMULATE')
-            if trd_env_raw == 'SIMULATE' or trd_env_raw == TrdEnv.SIMULATE:
-                continue
-
-            acc_id = acc['acc_id']
-            # Use TrdEnv.REAL for live account
-            trd_env = TrdEnv.REAL
-
-            # Funds
-            ret2, funds = trd.accinfo_query(trd_env=trd_env, acc_id=acc_id, refresh_cache=True)
-            if ret2 != RET_OK:
-                continue
-            f = funds.iloc[0]
-            usd_cash = (f.get('us_cash', 0) or 0)
-            usd_bp = (f.get('usd_net_cash_power', 0) or 0)
-            fund_raw = (f.get('fund_assets', 0) or 0)
-            currency = str(f.get('currency', ''))
-            fund_usd = (fund_raw / 7.8) if (currency == 'HKD' and fund_raw) else fund_raw
-
-            # Positions
-            ret3, pos = trd.position_list_query(trd_env=trd_env, acc_id=acc_id, refresh_cache=True)
-            holdings = {}
-            option_tickers: set[str] = set()
-            if ret3 == RET_OK and pos is not None and len(pos) > 0:
-                import re
-                for _, p in pos.iterrows():
-                    code = p['code']
-                    qty = p['qty']
-                    if qty == 0:
-                        continue
-                    if re.search(r'\d{6}[CP]\d+', code):
-                        # Option position — extract underlying ticker
-                        parts = re.match(r'US\.(\w+?)\d{6}[CP]\d+', code)
-                        if parts:
-                            option_tickers.add(parts.group(1))
-                    elif code.startswith('US.') and '..' not in code:
-                        short = code.replace('US.', '')
-                        holdings[short] = qty
-            trd.close()
-            trd.close()
-            return holdings, usd_cash, usd_bp, fund_usd, option_tickers
-        trd.close()
-    except Exception:
-        pass
-    return {}, 817.0, 48638.89, 48500.0, set()
+    """Pull live portfolio via the shared loader (src.data.portfolio_loader).
+    Kept here because scripts/oie_engine.py imports it. Returns
+    (stock_holdings, cash, buying_power, fund, existing_option_tickers).
+    Falls back to last-known cash if OpenD is unreachable."""
+    pf = fetch_portfolio()
+    if not pf.stocks and pf.funds.cash == 0 and pf.funds.fund == 0:
+        # OpenD unavailable — preserve historical fallback for graceful degradation
+        return {}, 817.0, 48638.89, 48500.0, set()
+    holdings = {t: pos['qty'] for t, pos in pf.stocks.items()}
+    return holdings, pf.funds.cash, pf.funds.buying_power, pf.funds.fund, pf.option_tickers
 
 
 @dataclass
@@ -433,6 +389,15 @@ def main():
     top_str = ", ".join(f"{c.ticker}:{c.strategy}${c.strike:.0f}s={c.score:.1f}" for c in top[:5])
     log.info(f"SCAN_DONE|raw={len(candidates)}|top={len(top)}|{top_str}")
 
+    # Find best of each strategy for 💡 marker
+    best_csp = None
+    best_cc = None
+    for c in top:
+        if c.strategy == 'CSP' and best_csp is None:
+            best_csp = c
+        if c.strategy == 'CC' and best_cc is None:
+            best_cc = c
+
     print(f"\n{'='*90}")
     print(f"  🎯 TOP {len(top)} TRADES  (1 = best, 10 = worst)")
     print(f"{'='*90}")
@@ -441,345 +406,44 @@ def main():
         print("  No candidates found. Relax DTE/delta/ROC filters or check data.")
         return
 
-    print(f"  {'#':>2s} {'Ticker':<6s} {'Strat':>5s} {'Score':>5s} "
+    # Column order: # Ticker Strat Strike Expiry DTE Δ Bid RoC IV OI Capital Score Reason
+    print(f"  {'':>5s} {'Ticker':<6s} {'Strat':>5s} "
           f"{'Strike':>10s} {'Expiry':>12s} {'DTE':>3s} {'Δ':>6s} "
-          f"{'Bid':>8s} {'RoC':>7s} {'IV':>7s} {'OI':>6s} {'Capital':>10s}  Reason")
-    print(f"  {'─'*2} {'─'*6} {'─'*5} {'─'*5} "
+          f"{'Bid':>8s} {'RoC':>7s} {'IV':>7s} {'OI':>6s} {'Capital':>10s} {'Score':>6s}  Reason")
+    print(f"  {'─'*5} {'─'*6} {'─'*5} "
           f"{'─'*10} {'─'*12} {'─'*3} {'─'*6} "
-          f"{'─'*8} {'─'*7} {'─'*7} {'─'*6} {'─'*10}  {'─'*40}")
+          f"{'─'*8} {'─'*7} {'─'*7} {'─'*6} {'─'*10} {'─'*6}  {'─'*40}")
 
     for i, c in enumerate(top, 1):
         score_star = _score_stars(c.score)
-        print(f"  {i:>2d} {c.ticker:<6s} {c.strategy:>5s} {score_star:<5s} "
-              f"${c.strike:>9,.2f} {c.expiry:>12s} {c.dte:>3d} {c.delta:>5.3f} "
-              f"${c.bid:>7,.2f} {c.annualized_roc_pct:>6.1f}% {c.iv:>6.1f}% {c.open_interest:>6d} "
-              f"${c.capital_required:>9,.0f}  {c.reason[:45]}")
+        # 💡 marker for best CSP / best CC
+        if c is best_csp or c is best_cc:
+            bulb = "💡 "
+        else:
+            bulb = "   "
+        # $ connected to amounts (no space)
+        strike_str = f"{'$'+f'{c.strike:,.2f}':>10}"
+        bid_str = f"{'$'+f'{c.bid:,.2f}':>8}"
+        capital_str = f"{'$'+f'{c.capital_required:,.0f}':>10}"
+        print(f"  {bulb}{i:>2d} {c.ticker:<6s} {c.strategy:>5s} "
+              f"{strike_str} {c.expiry:>12s} {c.dte:>3d} {c.delta:>5.3f} "
+              f"{bid_str} {c.annualized_roc_pct:>6.1f}% {c.iv:>6.1f}% {c.open_interest:>6d} "
+              f"{capital_str} {score_star:<6s} {c.reason[:45]}")
 
-    # ── Summary insight ──
-    print(f"\n  💡 Best CSP: {_best_of(top, 'CSP')}")
-    print(f"  💡 Best CC:  {_best_of(top, 'CC')}")
-
+    # ── Regime warning ──
     if regime in ('VOLATILE', 'BEARISH'):
-        print(f"  ⚠️  {regime} regime — favor CC over CSP, reduce position size by 25-50%")
+        print(f"\n  ⚠️  {regime} regime — favor CC over CSP, reduce position size by 25-50%")
     if regime == 'BULLISH':
-        print(f"  ✅ BULLISH regime — CSP premium is favorable, assignment risk lower")
+        print(f"\n  ✅ BULLISH regime — CSP premium is favorable, assignment risk lower")
 
     # ── Log top picks for backtesting / paper tracking ──
 
 
 # ═══════════════════════════════════════════════════════════════
-# SCORING ENGINE (1-10, lower = better)
+# SCORING ENGINE — moved to src/scoring/screener_score.py.
+# Re-exported above (import block) for backwards compatibility.
 # ═══════════════════════════════════════════════════════════════
 
-def _compute_ticker_score(
-    snap: StockSnapshot,
-    trend_composite: float,
-    analyst_consensus: str,
-    earnings_blackout: bool,
-    insider_sentiment: str,
-    target_upside: Optional[float],
-    news_score: float = 50.0,
-    regime: str = 'NEUTRAL',
-    regime_mult: float = 1.0,
-    iv_rank: float = 50.0,
-) -> float:
-    """
-    Ticker-level score (1-10). Lower = better.
-    Every sub-score is 1 (best) to 10 (worst).
-    Weighted: Technical 25% + Options Eco 25% + Fundamental 15% + External 20% + Macro 15%
-    """
-    scores = {}
-
-    w = _cfg_val(lambda c: c.scoring_weights)
-
-    # 1. TECHNICAL — trend quality for premium selling
-    tech = _score_technical(snap, trend_composite)
-    scores['tech'] = tech * w['technical']
-
-    # 2. OPTIONS ECOSYSTEM — spread + IV rank
-    opt_eco = _score_options_eco(snap, iv_rank)
-    scores['opt_eco'] = opt_eco * w['options_quality']
-
-    # 3. FUNDAMENTAL — valuation health
-    fund = _score_fundamental(snap)
-    scores['fund'] = fund * w['fundamental']
-
-    # 4. EXTERNAL SENTIMENT — analyst + earnings + insider + news
-    ext = _score_external(analyst_consensus, earnings_blackout, insider_sentiment, target_upside, news_score)
-    scores['ext'] = ext * w['external_sentiment']
-
-    # 5. MACRO/RISK — VIX regime + VRP adjustment
-    macro = _score_macro(regime, regime_mult, earnings_blackout)
-    scores['macro'] = macro * w['macro_risk']
-
-    return round(sum(scores.values()), 2)
-
-
-def _score_technical(snap: StockSnapshot, trend_comp: float) -> float:
-    """Score trend quality. 1 = ideal for premium selling, 10 = avoid."""
-    # RSI: 45-55 = ideal (1), extremes = bad (10)
-    rsi = snap.rsi_14 or 50
-    if 45 <= rsi <= 55:  rsi_score = 1.0
-    elif 40 <= rsi <= 60: rsi_score = 3.0
-    elif 35 <= rsi <= 65: rsi_score = 5.0
-    elif 30 <= rsi <= 70: rsi_score = 7.0
-    else:                  rsi_score = 9.0
-
-    # Trend alignment: price > SMA50 > SMA200 = good
-    trend_score = 3.0
-    if snap.sma_50 and snap.sma_200:
-        if snap.last_price > snap.sma_50 > snap.sma_200:
-            trend_score = 1.0
-        elif snap.last_price > snap.sma_200:
-            trend_score = 3.0
-        elif snap.last_price > snap.sma_50:
-            trend_score = 5.0
-        elif snap.last_price > snap.sma_200:
-            trend_score = 7.0
-        else:
-            trend_score = 9.0
-
-    # ADX: >25 trending (good for directional)
-    adx = snap.adx_14 or 20
-    if adx >= 40:     adx_score = 1.0
-    elif adx >= 25:   adx_score = 3.0
-    elif adx >= 20:   adx_score = 5.0
-    else:             adx_score = 8.0
-
-    # Volume: good volume = better execution
-    vol_score = 3.0
-    if snap.volume_ratio and snap.volume_ratio > 1.0:
-        vol_score = 1.0
-    elif snap.volume_ratio and snap.volume_ratio > 0.7:
-        vol_score = 4.0
-    else:
-        vol_score = 7.0
-
-    return (rsi_score * 0.35 + trend_score * 0.30 + adx_score * 0.20 + vol_score * 0.15)
-
-
-def _score_options_eco(snap: StockSnapshot, iv_rank: float = 50.0) -> float:
-    """Score options ecosystem quality. 1 = great, 10 = poor."""
-    # Spread
-    if snap.bid_ask_spread_pct < 0.5:    spread = 1.0
-    elif snap.bid_ask_spread_pct < 1.0:  spread = 3.0
-    elif snap.bid_ask_spread_pct < 3.0:  spread = 5.0
-    elif snap.bid_ask_spread_pct < 5.0:  spread = 7.0
-    else:                                 spread = 9.0
-
-    # IV Rank: 30-70 = ideal for premium selling
-    if 30 <= iv_rank <= 70:     iv_score = 1.0
-    elif 20 <= iv_rank <= 80:   iv_score = 3.0
-    elif iv_rank > 80:          iv_score = 5.0
-    else:                       iv_score = 7.0
-
-    # Market cap proxy: large cap = liquid options
-    if snap.market_cap and snap.market_cap > 500e9: cap = 1.0
-    elif snap.market_cap and snap.market_cap > 100e9: cap = 3.0
-    elif snap.market_cap and snap.market_cap > 10e9: cap = 5.0
-    else: cap = 8.0
-
-    # Beta: too high beta = risky premium selling
-    if snap.beta_vs_spy and snap.beta_vs_spy < 1.0: beta = 1.0
-    elif snap.beta_vs_spy and snap.beta_vs_spy < 1.5: beta = 3.0
-    elif snap.beta_vs_spy and snap.beta_vs_spy < 2.0: beta = 6.0
-    else: beta = 9.0
-
-    return spread * 0.25 + iv_score * 0.25 + cap * 0.25 + beta * 0.25
-
-
-def _score_fundamental(snap: StockSnapshot) -> float:
-    """Score fundamental health. 1 = great, 10 = poor."""
-    # P/E: reasonable P/E = better
-    pe = snap.pe_ttm or snap.pe_ratio or 25
-    if pe and 10 <= pe <= 25:  pe_score = 1.0
-    elif pe and 25 < pe <= 40: pe_score = 3.0
-    elif pe and 40 < pe <= 60: pe_score = 5.0
-    elif pe and pe > 60:       pe_score = 8.0
-    else:                       pe_score = 5.0
-
-    # Dividend: dividend stocks work well for wheel
-    div = snap.dividend_yield_ttm or 0
-    if div and div > 2.0:     div_score = 1.0
-    elif div and div > 1.0:   div_score = 3.0
-    elif div and div > 0:     div_score = 5.0
-    else:                      div_score = 6.0
-
-    # Earnings: consistent EPS
-    if snap.eps_ttm and snap.eps_ttm > 0: eps_score = 1.0
-    else:                                   eps_score = 7.0
-
-    return pe_score * 0.40 + div_score * 0.30 + eps_score * 0.30
-
-
-def _score_external(consensus: str, blackout: bool, insider: str,
-                    upside: Optional[float], news_score: float = 50.0) -> float:
-    """Score external sentiment. 1 = bullish, 10 = bearish. Includes news sentiment."""
-    base = 4.0
-
-    if consensus == 'STRONG_BUY':  base -= 1.5
-    elif consensus == 'BUY':       base -= 0.8
-    elif consensus == 'HOLD':      base += 0.5
-    elif consensus == 'SELL':      base += 3.0
-    elif consensus == 'STRONG_SELL': base += 5.0
-
-    if upside and upside > 15:      base -= 1.0
-    elif upside and upside > 5:     base -= 0.5
-    elif upside and upside < -10:   base += 2.0
-
-    if blackout:                    base += 2.0
-
-    if insider == 'BUYING':         base -= 1.0
-    elif insider == 'SELLING':      base += 1.5
-
-    # News sentiment score (1-100 → penalty/bonus to 1-10 scale)
-    if news_score >= 70:            base -= 1.0   # bullish news
-    elif news_score <= 30:          base += 2.0   # bearish news
-    elif news_score <= 40:          base += 1.0   # cautious news
-
-    return max(1.0, min(10.0, base))
-
-
-def _score_macro(regime: str, regime_mult: float, blackout: bool) -> float:
-    """Score macro/risk context. 1 = favorable, 10 = unfavorable."""
-    if regime == 'BULLISH':    base = 2.0
-    elif regime == 'NEUTRAL':  base = 3.0
-    elif regime == 'CAUTIOUS': base = 4.0
-    elif regime == 'VOLATILE': base = 6.0
-    elif regime == 'BEARISH':  base = 8.0
-    else:                      base = 5.0
-
-    if blackout:
-        base += 2.0
-
-    return max(1.0, min(10.0, base))
-
-
-def _trend_composite(snap: StockSnapshot) -> float:
-    """0-100 trend composite (simplified from existing scoring)."""
-    trend = 50.0
-    if snap.sma_50 and snap.sma_200:
-        if snap.last_price > snap.sma_50 > snap.sma_200:
-            trend = 75.0
-        elif snap.last_price > snap.sma_200:
-            trend = 60.0
-        elif snap.last_price > snap.sma_50:
-            trend = 40.0
-        else:
-            trend = 25.0
-    rsi = snap.rsi_14 or 50
-    rsi_factor = 0.5 if 40 <= rsi <= 60 else 0.3
-    return trend * (0.7 + rsi_factor)
-
-
-def _contract_penalty(c: OptionSnapshot, delta: float, roc: float) -> float:
-    """Per-contract score adjustment (added to ticker score). Lower = better.
-    All thresholds from config/rules.yaml."""
-    penalty = 0.0
-    cp = lambda key: _cfg_val(lambda cfg: cfg.contract_penalty(key))
-
-    # ═══ DTE WINDOW ═══
-    if c.dte < _cfg_val(lambda cfg: cfg.dte_hard_block):
-        penalty += cp('dte_hard_block')
-    elif c.dte < 14:
-        penalty += cp('dte_weekly_penalty')
-    elif c.dte < _cfg_val(lambda cfg: cfg.dte_penalty_start):
-        penalty += cp('dte_short_penalty')
-    elif c.dte < _cfg_val(lambda cfg: cfg.dte_optimal_min):
-        penalty += 0.5
-    elif c.dte <= _cfg_val(lambda cfg: cfg.dte_optimal_max):
-        penalty += cp('dte_optimal_bonus')
-    elif c.dte <= 60:
-        penalty += 0.0
-    else:
-        penalty += cp('dte_long_penalty')
-
-    # Low OI
-    if c.open_interest < 100:
-        penalty += cp('low_oi_penalty')
-    elif c.open_interest < _cfg_val(lambda cfg: cfg.oi_min):
-        penalty += cp('medium_oi_penalty')
-
-    # Wide spread
-    if c.bid_ask_spread_pct > 5:
-        penalty += cp('wide_spread_penalty')
-    elif c.bid_ask_spread_pct > 2:
-        penalty += cp('medium_spread_penalty')
-
-    # Delta extreme
-    if delta < 0.15:
-        penalty += cp('low_delta_penalty')
-
-    # Reward high RoC
-    if roc > 24:
-        penalty += cp('high_roc_bonus')
-    elif roc > 18:
-        penalty += cp('medium_roc_bonus')
-    elif roc > 15:
-        penalty -= 0.3
-
-    # Reward high IV
-    if c.implied_vol > 35:
-        penalty += cp('high_iv_bonus')
-
-    # Low volume
-    if c.volume < 50:
-        penalty += cp('low_volume_penalty')
-    elif c.volume < _cfg_val(lambda cfg: cfg.volume_min):
-        penalty += 2.0
-
-    return penalty
-
-
-def _compute_chain_gex(contracts: list, underlying_price: float) -> float:
-    """Approximate Gamma Exposure from option contracts. Negative = dealer short gamma."""
-    total = 0.0
-    for c in contracts:
-        if c.gamma and c.open_interest and underlying_price > 0:
-            total += abs(c.gamma) * c.open_interest * underlying_price * 100
-    return total
-
-
-def _csp_roc(bid: float, strike: float, dte: int) -> float:
-    if strike <= 0 or dte <= 0:
-        return 0.0
-    return (bid / strike) * (365.0 / dte) * 100
-
-
-def _regime_multiplier(regime: str) -> float:
-    return {'BULLISH': 0.85, 'NEUTRAL': 1.0, 'VOLATILE': 1.2, 'BEARISH': 1.5}.get(regime, 1.0)
-
-
-def _reason(ticker_score: float, contract_score: float, strat: str) -> str:
-    if contract_score <= 2.0:
-        return f"{'🔥' if strat=='CSP' else '💎'} Excellent setup"
-    elif contract_score <= 3.5:
-        return f"Strong {strat} candidate"
-    elif contract_score <= 5.0:
-        return "Good, moderate risk"
-    elif contract_score <= 7.0:
-        return "Decent, higher risk"
-    else:
-        return "Marginal, caution"
-
-
-def _score_stars(score: float) -> str:
-    if score <= 2.0: return '⭐1'
-    elif score <= 3.0: return '⭐2'
-    elif score <= 4.0: return '⭐3'
-    elif score <= 5.0: return ' 4 '
-    elif score <= 6.0: return ' 5 '
-    elif score <= 7.0: return ' 6 '
-    elif score <= 8.0: return ' 7 '
-    return ' 8+'
-
-
-def _best_of(candidates: list[TradeCandidate], strategy: str) -> str:
-    filtered = [c for c in candidates if c.strategy == strategy]
-    if not filtered:
-        return f"No {strategy} candidates"
-    best = filtered[0]
-    return f"{best.ticker} ${best.strike:,.0f} {best.expiry} Δ{best.delta:.2f} RoC {best.annualized_roc_pct:.1f}% Score {best.score}"
 
 
 if __name__ == '__main__':

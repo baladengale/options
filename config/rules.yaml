@@ -17,7 +17,8 @@ regime:
 
   # Position size multiplier per regime
   position_mult:
-    BULLISH: 1.0     # full size
+    BULLISH: 0.80    # UNVALIDATED — capped from 1.0: sub-15 VIX is the asymmetric jump-risk zone
+                     # (loss-management-playbook.md §7, Decision #9, 2026-07-17). Backtest pending.
     NEUTRAL: 0.75    # 75% size
     CAUTIOUS: 0.50   # 50% size
     VOLATILE: 0.25   # 25% size
@@ -111,11 +112,11 @@ scoring:
 
 # ── Position Sizing Hard Limits ──
 position_limits:
-  max_single_position_pct: 0.75     # 15% max per underlying (Temporary override for testing)
+  max_single_position_pct: 0.15     # 15% max per underlying (GOAL.md hard limit — restored from 0.75 testing override)
   max_sector_pct: 0.25              # 25% max per sector
   max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
-  max_open_positions: 15             # total OPTIONS positions (stocks excluded)
+  max_open_positions: 8             # total positions, stocks + options (GOAL.md §3)
   max_daily_new_positions: 2        # new trades per day
   max_margin_pct: 0.30              # 30% margin utilization max
 
@@ -144,8 +145,37 @@ stop_loss:
   # Layer 2: Delta gates (absolute value)
   delta:
     csp_critical: 0.60   # CSP |Δ| > 0.60 → too directional, cut it
+    csp_decision: 0.40   # CSP |Δ| ≥ 0.40 → "decision time": plan roll / take assignment / exit
     cc_critical: 0.50    # CC Δ > 0.50 → prepare for assignment
     cc_warn: 0.40        # CC Δ > 0.40 → monitor closely
+
+# ── Rolling Discipline (UNVALIDATED — backtest pending, playbook §3) ──
+rolling:
+  net_credit_only: true            # never pay a debit to roll (GOAL.md §6)
+  max_rolls_per_campaign: 2        # more than 2 rolls = broken thesis, not bad luck
+  min_extension_days: 30           # rolling weeklies churns commissions
+  broken_if_credit_requires_dte_gt: 90   # only a 90+ DTE roll gets a credit → close instead
+
+# ── Holdings Exit Framework (UNVALIDATED — backtest pending, playbook §4-§6) ──
+# The stock-leg loss rules: thesis-break exits + price backstops + capacity math.
+holdings_exit:
+  # Decision #10 policy: ≤ dead_zone: never CC below basis (unchanged).
+  # > dead_zone: thesis gates decide — broken → EXIT signal; intact → surface
+  # hold-unencumbered vs flagged below-basis CC choice. Engine never auto-sells.
+  dead_zone_drop_pct: 0.15         # >15% below adjusted basis = dead zone (basis-strike CC pays ~0)
+  backstop_conditional_pct: 0.30   # exit signal at -30% IF below 200 SMA with negative slope
+  backstop_hard_pct: 0.40          # unconditional circuit breaker at -40% from adjusted basis
+  months_to_recover_flag: 12       # gap / monthly premium > 12 months → REDEPLOY review
+  time_stop_months: 12             # stagnant this long → compare vs premium-yield alternative
+
+  # Thesis-break gates (codable on quarterly fundamentals; playbook §5)
+  thesis:
+    growth_stall_quarters: 2       # consecutive quarters of negative YoY revenue growth
+    decel_quarters: 3              # consecutive quarters of BOTH rev+EPS growth deceleration
+    gross_margin_drop_bps: 100     # gross margin drop over 2 years (with 3 declining quarters)
+    debt_ebitda_max: 4.5           # Debt/EBITDA above this = balance-sheet stress
+    fcf_yield_min_pct: 2.0         # FCF yield below this + net capital raising = cash-flow break
+    broken_min_gates: 2            # thesis BROKEN if ≥2 gates fail (growth stall alone also breaks)
 
 # ── CC Management ──
 cc_management:

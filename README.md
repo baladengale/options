@@ -17,31 +17,48 @@ source .venv/bin/activate
 # Install dependencies (first time only)
 pip install -r requirements.txt
 
-# 1. Check real portfolio health (reads moomoo directly — no DB needed)
-python3 scripts/portfolio_check.py
+# ── Daily Workflow (in order) ──
 
-# 2. Full portfolio summary — positions, order history, all-time option P&L
-python3 scripts/portfolio_summary.py
+# 1. Full portfolio — state + P&L + health (funds, positions, orders, income, decisions, overlap, guardrails)
+python3 scripts/portfolio.py
 
-# 3. Screen for best option trades (CC + CSP)
-python3 scripts/screener.py --top 10 --force
+# 2. Screen for best option trades (CC + CSP)
+python3 scripts/screener.py --top 10
 
-# 4. Paper trading engine (validate strategy before live execution)
+# ── Focused Views ──
+
+# 3. Quick funds + P&L only (no scoring/moomoo calls after initial fetch)
+python3 scripts/portfolio.py --fast
+
+# 4. Health deep-dive (decisions + overlap + guardrails only)
+python3 scripts/portfolio.py --health
+
+# 5. Account funds only
+python3 scripts/portfolio.py --funds
+
+# 6. Positions + P&L + income only
+python3 scripts/portfolio.py --pnl
+
+# ── Paper Trading (validate before live) ──
+
+# 6. Paper trading engine
 python3 scripts/oie_engine.py init          # Once: seed paper portfolio from REAL
 python3 scripts/oie_engine.py once --force  # Run one cycle, see what it does
 python3 scripts/oie_engine.py status        # Check paper portfolio anytime
 python3 scripts/oie_engine.py run           # Continuous mode (30-min cycles)
 
-# 5. Adhoc research
+# ── Adhoc Research ──
+
+# 7. Single-ticker deep dive
 python3 scripts/market_data.py NVDA --options
+
+# 8. Macro + sentiment
 python3 scripts/market_sentiment.py
 ```
 
 **Prerequisites**: OpenD running on `127.0.0.1:11111`. Python 3.9+ with venv: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
 
-**One database, one engine:**
-- `db/oie_paper.db` — your **paper** trading portfolio (simulated by the OIE engine)
-- Real portfolio is read directly from moomoo — no local mirror needed
+**No DB needed for real portfolio.** All scripts poll moomoo OpenD directly on each run — positions, orders, cash, BP are live. The only database is `db/oie_paper.db` for paper trading simulation.
 
 ---
 
@@ -50,8 +67,10 @@ python3 scripts/market_sentiment.py
 ```
 Moomoo REAL account (read-only poll)
        │
-       ├── portfolio_check.py ──→ Real portfolio health (direct moomoo read)
-       ├── screener.py ──→ Watchlist screening (direct moomoo read)
+       ├── portfolio.py        ──→ Consolidated: state + P&L + health (funds, positions, income, decisions, overlap, guardrails)
+       ├── screener.py         ──→ Watchlist screening (direct moomoo read)
+       ├── market_data.py      ──→ Single-ticker deep dive
+       ├── market_sentiment.py ──→ Macro regime + sentiment
        │
        └── oie_engine.py ──→ db/oie_paper.db
              ├── paper_positions   (option positions + lifecycle)
@@ -74,28 +93,43 @@ options/
 │   └── rules.yaml                     # Master config: all parameters, thresholds, limits
 ├── src/
 │   ├── data/
+│   │   ├── portfolio_loader.py          # Shared: fetch_funds, fetch_positions, fetch_orders, fetch_portfolio
 │   │   ├── models.py                  # Dataclasses: StockSnapshot, OptionSnapshot
 │   │   ├── moomoo_client.py           # Moomoo OpenD data client (quotes + chains)
 │   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro
 │   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, ADX, HV)
 │   │   ├── oie_db.py                  # OIE paper portfolio DB
 │   │   └── guardrails.py              # Portfolio size/risk limits (shared)
+│   ├── scoring/
+│   │   ├── screener_score.py          # Watchlist scoring (extracted from screener.py)
+│   │   └── holding_score.py           # Position scoring + CC hunting
+│   ├── risk/
+│   │   ├── overlap.py                 # Put/call overlap analysis
+│   │   ├── holdings_exit.py           # Exit framework: dead zone, backstop, circuit breaker
+│   │   └── monitor.py                 # Real-time risk monitoring
+│   ├── portfolio/
+│   │   └── summary.py                 # P&L, income, monthly, sector breakdown
 │   ├── analysis/
-│   │   └── sentiment.py               # Shared: macro context + ticker sentiment
+│   │   ├── sentiment.py               # Shared: macro context + ticker sentiment
+│   │   └── thesis.py                  # Investment thesis evaluation
 │   ├── config.py                      # Typed config loader from rules.yaml
 │   └── logging_setup.py               # Shared logging → logs/options.log
 ├── scripts/
-│   ├── portfolio_check.py             # Real portfolio health (moomoo direct read)
-│   ├── portfolio_summary.py           # Full portfolio + order history + option P&L
+│   ├── portfolio.py                   # Consolidated: state + P&L + health (replaces 4 former scripts)
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
-│   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status/sim)
+│   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
 │   └── market_sentiment.py            # Adhoc: macro + analyst + earnings + news
 ├── tests/
-│   ├── test_oie_db.py                 # OIE paper DB tests (27 tests)
-│   ├── test_oie_simulation.py         # OIE simulation + lifecycle tests (19 tests)
-│   ├── test_screener_scoring.py       # Screener scoring tests (28 tests)
-│   └── ...                            # 316 tests total
+│   ├── test_oie_db.py                 # OIE paper DB tests
+│   ├── test_oie_simulation.py         # OIE simulation + lifecycle tests
+│   ├── test_screener_scoring.py       # Screener scoring tests
+│   ├── test_holding_score.py          # Holding/option scoring tests
+│   ├── test_overlap.py                # Put/call overlap analysis tests
+│   ├── test_portfolio_loader.py       # Portfolio loader tests
+│   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
+│   ├── test_holdings_exit.py          # Exit framework tests
+│   └── ...                            # 420 tests total
 ├── specs/                             # Research + architecture docs
 ├── CLAUDE.md                          # AI coding instructions
 ├── GOAL.md                            # Investment goals
@@ -155,82 +189,43 @@ python3 scripts/screener.py --log             # Log picks to trade_log table
 
 ---
 
-### `portfolio_check.py` — Position Health
+### `portfolio.py` — Consolidated Portfolio (State + P&L + Health)
 
-Scores every open stock and option position. Gives decisions: sell CC, close at 50% profit, roll underwater, hold.
-
-```bash
-source .venv/bin/activate && python3 scripts/portfolio_check.py                # Full check
-source .venv/bin/activate && python3 scripts/portfolio_check.py --no-external  # Offline mode (skip yfinance)
-```
-
-**Options:**
-
-| Flag | Description |
-|------|-------------|
-| `--no-external` | Skip Yahoo Finance (offline, faster) |
-
-**Decision logic for stocks:**
-
-| Condition | Decision |
-|-----------|----------|
-| ≥ 100 shares + CC RoC ≥ 8% | 🎯 SELL CC $STRIKE DATE @ RoC% |
-| < 100 shares | 📋 HOLD (<100 shares, can't sell CC) |
-| No liquid calls available | 📋 HOLD (no suitable contracts) |
-
-**Decision logic for options:**
-
-| Condition | Decision |
-|-----------|----------|
-| Profit ≥ 70% | ✅ CLOSE (70%+ profit — risk/reward inverted) |
-| Profit ≥ 50% | ✅ CLOSE (50%+ profit — TastyTrade backtested) |
-| Profit ≥ 30% | 👍 HOLD (30%+ captured, still earning) |
-| DTE ≤ 3 | ⚠️ EXPIRING — close or roll (gamma explosion) |
-| ITM (Δ > 0.50) | ⚠️ ITM RISK — assignment likely |
-| Underwater + DTE ≤ 21 | 🔄 CONSIDER ROLLING |
-| Loss < -$500 | 🔴 UNDERWATER — evaluate exit |
-
-**Output:**
-```
-💰 Liquid: $48,653 (cash $80 + fund $48,573) | BP: $48,653 | 13 stocks, 13 options
-
-🎯 COVERED CALL CANDIDATES:
-  Ticker      Qty      Price       Cost       MktVal     P&L%  Score  Decision
-  V           431 $   348.20 $   270.54 $ 150,074.20   +28.7%    3.0  SELL CC $360 2026-08-21 @ 21.0%
-
-📊 OPTION POSITIONS (13)
-  Code                       Qty  DTE       Δ     Cost      Bid        P&L    P&L%  Profit%  Score  Decision
-  US.AVGO260731P350000        -1   22  -0.139 $  11.20 $   4.00 $   705.00  +62.9%    64.3%    3.5  ✅ CLOSE (50%+ profit)
-  US.V260821C380000           -1   43  +0.170 $   5.15 $   2.42 $   255.50  +49.6%    53.0%    3.5  ✅ CLOSE (50%+ profit)
-  US.GOOG260717P335000        -1    8  -0.154 $   1.22 $   1.43 $   -33.00  -27.0%   -17.2%    6.0  ⚠️  UNDERWATER
-```
-
----
-
-### `portfolio_summary.py` — Full Portfolio & Order History
-
-Comprehensive portfolio overview: all positions, complete order history, all-time option income, monthly breakdowns, and sector concentration. Pulls live data from moomoo OpenD — no DB needed.
+One wrapper replacing the former `portfolio_summary.py`, `portfolio_check.py`, `options_table.py`, and `liability_overlap.py`. All computation lives in `src/` modules; this script is a thin display layer.
 
 ```bash
-source .venv/bin/activate && python3 scripts/portfolio_summary.py
+source .venv/bin/activate && python3 scripts/portfolio.py                 # Full report (state + P&L + health)
+source .venv/bin/activate && python3 scripts/portfolio.py --fast          # Funds + P&L only (no scoring)
+source .venv/bin/activate && python3 scripts/portfolio.py --health        # Decisions + overlap + guardrails
+source .venv/bin/activate && python3 scripts/portfolio.py --funds         # Account funds only
+source .venv/bin/activate && python3 scripts/portfolio.py --pnl           # Positions + P&L + income
+source .venv/bin/activate && python3 scripts/portfolio.py --no-external   # Skip yfinance (offline)
 ```
 
-**What it shows:**
+**Sections produced:**
 
-| Section | Description |
-|---------|-------------|
-| Account Summary | Cash, fund assets, buying power, margin, total assets |
-| Stock Positions | Every holding with cost basis, market value, P&L, P&L% |
-| Option Positions | Every contract with DTE, strike, cost, current P&L |
-| Order History | All filled/cancelled orders pulled from moomoo history |
-| Overall Summary | NLV, unrealized P&L, all-time option income, net P&L |
-| Monthly Breakdown | Premium collected vs buybacks by month |
-| Sector Breakdown | Concentration per sector with visual bars |
+| Section | Flag | Description |
+|---------|------|-------------|
+| Account Funds | (always) | Cash, fund assets, buying power, margin, NLV, CSP liability |
+| Stock Positions | `--pnl` / default | Every holding with cost basis, market value, P&L, P&L% |
+| Option Positions | `--pnl` / default | Every contract with DTE, strike, cost, current P&L |
+| All-Time Income | `--pnl` / default | Premium collected vs buybacks, monthly breakdown |
+| Sector Breakdown | `--pnl` / default | Concentration per sector with visual bars |
+| Stock Decisions | `--health` / default | Score + CC hunt + exit framework (dead zone, backstop, thesis check) |
+| Option Decisions | `--health` / default | Score + close/roll/hold decisions per contract |
+| Put/Call Overlap | `--health` / default | Straddle/strangle detection, stacked call risk, net scenarios |
+| Guardrails | `--health` / default | Position sizing, sector concentration, CSP coverage, blocks/warnings |
 
-**Key metrics computed:**
-- **Net Option Income** = Premium Collected − Buybacks Paid (all-time)
-- **Total Gain** = Realized Option Income + Unrealized Stock P&L + Unrealized Option P&L
-- **CSP Liability** = total cash required if all puts assigned at strike
+**Underlying `src/` modules:**
+
+| Module | Provides |
+|--------|---------|
+| `src/data/portfolio_loader.py` | `fetch_portfolio_and_orders()` — single connection, all moomoo data |
+| `src/portfolio/summary.py` | `compute_income()`, `compute_sector_breakdown()`, P&L roll-ups |
+| `src/scoring/holding_score.py` | `_score_holding()`, `_score_option()`, `_find_best_cc()` |
+| `src/risk/overlap.py` | `analyze_overlap()` — straddle/strangle/stacked-call detection |
+| `src/risk/holdings_exit.py` | `evaluate_holding_exit()` — dead zone, backstop, circuit breaker |
+| `src/analysis/thesis.py` | `evaluate_thesis()` — investment thesis gate for dead-zone holdings |
 
 ---
 
@@ -436,7 +431,7 @@ Every option position in the paper portfolio follows this state machine:
 
 #### Paper Portfolio Database
 
-The OIE uses its own SQLite DB at `db/oie_paper.db` — completely separate from `db/options.db`.
+The OIE uses its own SQLite DB at `db/oie_paper.db` — completely separate from the real portfolio (which is read live from moomoo, no local mirror).
 
 | Table | Purpose |
 |-------|---------|
@@ -492,7 +487,7 @@ python3 scripts/oie_engine.py history  # Value over time
 
 **Comparing paper vs real:**
 ```bash
-python3 scripts/portfolio_check.py     # Real portfolio health
+python3 scripts/portfolio.py --health  # Real portfolio health
 python3 scripts/oie_engine.py status   # Paper portfolio health
 # Compare: which made better decisions? Did paper catch exits that real missed?
 ```
@@ -574,7 +569,7 @@ python3 scripts/oie_engine.py once --force
 # Expected: "New trades: 0" (existing options block duplicates)
 
 # STEP 10: Compare paper vs real
-python3 scripts/portfolio_check.py --no-external   # Real portfolio
+python3 scripts/portfolio.py --health --no-external  # Real portfolio health
 python3 scripts/oie_engine.py status               # Paper portfolio
 # Compare: Did paper catch exits real missed? Different candidates?
 ```
@@ -594,11 +589,11 @@ crontab -e
 # The --skip-closed flag checks market hours and skips if closed
 */30 9-16 * * 1-5 cd ~/options && python3 scripts/oie_engine.py once --skip-closed >> logs/oie.log 2>&1
 
-# Portfolio sync — once after market close
-30 16 * * 1-5 cd ~/options && python3 scripts/portfolio.py sync >> logs/portfolio.log 2>&1
+# Daily portfolio check — after market close
+30 16 * * 1-5 cd ~/options && python3 scripts/portfolio.py --health --no-external >> logs/daily_check.log 2>&1
 
-# Full daily run — after sync
-0 17 * * 1-5 cd ~/options && python3 scripts/daily_run.py --top 10 >> logs/daily.log 2>&1
+# Weekly portfolio summary — Friday after close
+0 17 * * 5 cd ~/options && python3 scripts/portfolio.py --pnl >> logs/weekly_summary.log 2>&1
 ```
 
 **How `--skip-closed` works:**
@@ -662,7 +657,7 @@ python3 scripts/oie_engine.py status  # Same positions as before
 
 ## Scoring Guide — 1-10 Scale
 
-Both `screener.py` and `portfolio_check.py` use the same 1-10 scale. **Lower is better.** 1 = act now, 10 = emergency.
+Both `screener.py` and `portfolio.py --health` use the same 1-10 scale via `src/scoring/holding_score.py`. **Lower is better.** 1 = act now, 10 = emergency.
 
 ### Score Ranges
 
@@ -676,7 +671,7 @@ Both `screener.py` and `portfolio_check.py` use the same 1-10 scale. **Lower is 
 | **6.0–7.0** | 🔴 Problem | Multiple risk factors: underwater + near expiry + ITM. Needs action. |
 | **8.0–10.0** | 🚨 Emergency | Stacked risk: ITM + expiring + earnings blackout + wide spread. |
 
-### How `portfolio_check.py` Scores Existing Positions
+### How `portfolio.py --health` Scores Existing Positions
 
 Starts at **5.0 (neutral)**, then adjusts:
 
@@ -812,7 +807,7 @@ IV Rank = where current IV sits in its 1-year range (0-100)
   IV at 1Y low  → IV Rank = 0
 ```
 
-Computed by `IVHistoryTracker` which persists daily IV data in `db/options.db`.
+Computed by `IVHistoryTracker` which persists daily IV data locally.
 
 | IV Rank | Score | What it means |
 |---------|-------|---------------|
@@ -1117,7 +1112,7 @@ Technical  Options  Fund    DTE     OI     Spread   Concen-  Cash    Daily
 
 ### `src/analysis/sentiment.py` — Shared Sentiment
 
-Used by `screener.py`, `portfolio_check.py`, `daily_run.py`, and `market_sentiment.py`. Single source of truth — no duplicate API calls.
+Used by `screener.py`, `portfolio.py`, and `market_sentiment.py`. Single source of truth — no duplicate API calls.
 
 | Function | Returns | Description |
 |----------|---------|-------------|
@@ -1144,27 +1139,23 @@ Position sizing, sector concentration, cash buffer, CSP stress test. Shared by s
 ┌──────────────────────────────────────────────────────────────┐
 │                      DATA LAYER                               │
 │                                                                │
-│  portfolio.py sync (cron or on-demand)                         │
-│    ├── moomoo REAL account ← accinfo_query                     │
-│    ├── moomoo REAL account ← position_list_query               │
-│    └── moomoo REAL account ← order_list_query                  │
-│              │                                                 │
-│              ▼                                                 │
-│  db/options.db (REAL portfolio mirror, 9 tables)               │
+│  All scripts poll moomoo REAL account directly on each run    │
+│  (no local DB mirror of real portfolio needed)                │
+│    ├── moomoo REAL account ← position_list_query              │
+│    ├── moomoo REAL account ← order_list_query (all-time)      │
+│    └── moomoo REAL account ← accinfo_query (cash/BP/margin)   │
 └──────────────────────┬───────────────────────────────────────┘
                        │
 ┌──────────────────────┴───────────────────────────────────────┐
 │                    ANALYSIS LAYER                              │
 │                                                                │
-│  daily_run.py (orchestrator)                                   │
-│    ├── src/analysis/sentiment.py (macro + sentiment)           │
-│    ├── screener.py (watchlist → CC/CSP candidates)             │
-│    ├── portfolio_check.py (positions → decisions)              │
-│    ├── src/scoring/ (WHEEL_SCORE)                              │
-│    └── src/risk/ (collar check, position monitor)              │
+│  portfolio.py         (state + P&L + health — consolidated)    │
+│  screener.py          (watchlist → CC/CSP candidates)        │
+│  market_data.py       (single ticker deep dive)              │
+│  market_sentiment.py  (macro regime + sentiment)             │
 │              │                                                 │
 │              ▼                                                 │
-│  Console output + DB tables (run_signals, trade_log)           │
+│  Console output (all results printed to stdout)               │
 └──────────────────────┬───────────────────────────────────────┘
                        │
 ┌──────────────────────┴───────────────────────────────────────┐
@@ -1183,12 +1174,8 @@ Position sizing, sector concentration, cash buffer, CSP stress test. Shared by s
 ┌──────────────────────┴───────────────────────────────────────┐
 │                   EXECUTION LAYER                              │
 │                                                                │
-│  👤 MANUAL — user reviews suggestions from BOTH:               │
-│     • screener.py / portfolio_check.py (real portfolio)        │
-│     • oie_engine.py status (paper portfolio decisions)         │
-│     Submits orders in moomoo desktop app                        │
-│                                                                │
-│  portfolio.py sync picks up fills next run                     │
+│  👤 MANUAL — user reviews script output, submits orders in    │
+│     moomoo desktop app. Next script run picks up fills.        │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1301,7 +1288,7 @@ python3 scripts/screener.py --cc-only --top 5
 
 ### Stop-Loss System — Layered Defense
 
-Every option position checked by `portfolio_check.py` runs through two stop-loss layers. **Stop-loss triggers override profit targets** — risk management takes priority over profit taking.
+Every option position checked by `portfolio.py --health` runs through two stop-loss layers. **Stop-loss triggers override profit targets** — risk management takes priority over profit taking.
 
 #### Layer 1: Premium Multiple Stop (DTE-Adjusted)
 
@@ -1456,8 +1443,11 @@ crontab -e
 # Paper engine — every 30 min during US market hours
 */30 13-20 * * 1-5 cd /path/to/options && python3 scripts/oie_engine.py once --skip-closed >> logs/cron.log 2>&1
 
-# Daily status snapshot
-0 21 * * 1-5 cd /path/to/options && python3 scripts/portfolio_check.py --no-external >> logs/daily_check.log 2>&1
+# Daily portfolio health check after market close
+0 21 * * 1-5 cd /path/to/options && python3 scripts/portfolio.py --health --no-external >> logs/daily_check.log 2>&1
+
+# Weekly full summary (Friday after close)
+0 21 * * 5 cd /path/to/options && python3 scripts/portfolio.py --pnl >> logs/weekly_summary.log 2>&1
 ```
 
 ### tmux Session (persistent)
@@ -1479,7 +1469,7 @@ python3 scripts/oie_engine.py run --interval 30
 python3 scripts/oie_engine.py test
 
 # Portfolio health (needs OpenD)
-python3 scripts/portfolio_check.py --no-external
+python3 scripts/portfolio.py --health --no-external
 
 # Paper engine status
 python3 scripts/oie_engine.py status
