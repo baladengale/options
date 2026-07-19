@@ -45,11 +45,6 @@ def test_reason_bands():
     assert 'Marginal' in ss._reason(5.0, 8.0, 'CC')
 
 
-def test_regime_multiplier():
-    assert ss._regime_multiplier('BULLISH') == 0.85
-    assert ss._regime_multiplier('NEUTRAL') == 1.0
-    assert ss._regime_multiplier('UNKNOWN') == 1.0
-
 
 def test_compute_ticker_score_returns_in_range():
     """A neutral snapshot across all dimensions should land mid-scale (1-10)."""

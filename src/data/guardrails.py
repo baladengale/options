@@ -76,11 +76,11 @@ class GuardrailChecker:
 
     @classmethod
     def MIN_CASH_BUFFER_WARN(cls):
-        return 0.25  # baseline, overridden per regime
+        return cls._cfg().cash_buffer_warn
 
     @classmethod
     def MIN_CASH_BUFFER_CRITICAL(cls):
-        return 0.10
+        return cls._cfg().cash_buffer_critical
 
     @classmethod
     def MAX_OPEN_POSITIONS(cls):
@@ -96,7 +96,7 @@ class GuardrailChecker:
 
     @classmethod
     def CSP_CAPITAL_COVERAGE(cls):
-        return 1.0  # Must cover 100% of CSP liability
+        return cls._cfg().csp_capital_coverage
 
     def __init__(self, net_liq: float, cash: float, buying_power: float,
                  margin_used: float = 0.0,
@@ -154,9 +154,9 @@ class GuardrailChecker:
             if pct > r.max_single_position_pct:
                 r.max_single_position_pct = pct
             if pct > self.MAX_POSITION_PCT() * 100:
-                r.blocks.append(
+                r.warnings.append(
                     f"{pos.get('ticker', '??')} at {pct:.1f}% of portfolio "
-                    f"> {self.MAX_POSITION_PCT()*100:.0f}% limit. Reduce size.")
+                    f"> {self.MAX_POSITION_PCT()*100:.0f}% limit. Reduce via CC only; no new CSP/stock buys.")
 
         # ── Sector concentration ──
         sectors = {}
@@ -173,7 +173,7 @@ class GuardrailChecker:
         # ── Worst-case assignment stress test ──
         csp_total = sum(p.get('csp_liability', 0) for p in self._positions)
         r.worst_case_assignment = csp_total
-        available = self._cash + self._bp * 0.5  # cash + 50% of BP as margin buffer
+        available = self._cash + self._bp * self._cfg().bp_margin_buffer
         r.worst_case_shortfall = csp_total - available
         if r.worst_case_shortfall > 0:
             r.warnings.append(
@@ -181,12 +181,46 @@ class GuardrailChecker:
                 f"Available: ${available:,.0f}. Shortfall: ${r.worst_case_shortfall:,.0f}. "
                 f"Reduce CSP count or increase cash buffer.")
 
+        # ── CSP capital deployed concentration ──
+        csp_deployed_pct = (csp_total / self._net_liq) if self._net_liq > 0 else 0
+        csp_limit = self._cfg().max_csp_deployed_pct
+        if csp_deployed_pct > csp_limit:
+            r.blocks.append(
+                f"CSP capital deployed {csp_deployed_pct:.1%} > {csp_limit:.0%} limit. "
+                f"Close or let expire before opening new CSPs.")
+
         r.all_clear = len(r.blocks) == 0
         return r
 
     def check_new_trade(self, ticker: str, strategy: str, notional: float,
                         sector: str = 'Unknown') -> GuardrailReport:
         """Check if a new trade would pass all guardrails."""
+        r = GuardrailReport()
+
+        # ── Check over-concentrated position rules ──
+        current_pos_pct = 0.0
+        for pos in self._positions:
+            if pos.get('ticker') == ticker:
+                current_pos_pct = (pos.get('notional', 0) / self._net_liq * 100) if self._net_liq > 0 else 0
+                break
+
+        # If position already >15%, only allow CC to reduce exposure
+        if current_pos_pct > self.MAX_POSITION_PCT() * 100:
+            is_cc = strategy in ('CC', 'COVERED_CALL')
+            is_csp = strategy in ('CSP', 'CASH_SECURED_PUT')
+            is_buy = strategy in ('STOCK_BUY', 'BUY')
+
+            if is_csp or is_buy:
+                r.blocks.append(
+                    f"{ticker} at {current_pos_pct:.1f}% > {self.MAX_POSITION_PCT()*100:.0f}% limit. "
+                    f"Only CC allowed to reduce concentration. No new CSP/stock buys.")
+                return r
+            elif not is_cc:
+                r.warnings.append(
+                    f"{ticker} at {current_pos_pct:.1f}% > {self.MAX_POSITION_PCT()*100:.0f}% limit. "
+                    f"Consider CC to reduce position gradually.")
+
+        # ── Run full guardrail check with simulated new position ──
         new_positions = self._positions + [{
             'ticker': ticker, 'strategy': strategy,
             'notional': notional, 'sector': sector,
@@ -198,7 +232,8 @@ class GuardrailChecker:
             open_positions=new_positions,
             daily_order_count=self._daily_orders + 1,
         )
-        return gc.check()
+        r = gc.check()
+        return r
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -778,7 +778,7 @@ class OIEEngine:
 
             for c in contracts:
                 # Basic filters (matching screener logic)
-                if c.bid <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
+                if c.bid <= 0 or (c.open_interest or 0) < self.cfg.oi_min or (c.volume or 0) < 10:
                     continue
                 iv_sane = c.implied_vol and 0 < c.implied_vol < 500
                 if not iv_sane:
@@ -793,7 +793,8 @@ class OIEEngine:
 
                 # CSP
                 if c.option_type == 'PUT' and not has_shares:
-                    if abs_d < 0.05 or abs_d > 0.30:
+                    csp_delta = self.cfg.delta_range('csp', regime)
+                    if abs_d < csp_delta[0] or abs_d > csp_delta[1]:
                         continue
                     roc = _csp_roc(c.bid, c.strike, c.dte)
                     if roc < self.cfg.roc_min_csp:
@@ -820,7 +821,8 @@ class OIEEngine:
 
                 # CC
                 if c.option_type == 'CALL' and has_shares:
-                    if c.delta < 0.15 or c.delta > 0.35:
+                    cc_delta = self.cfg.delta_range('cc', regime)
+                    if c.delta < cc_delta[0] or c.delta > cc_delta[1]:
                         continue
                     roc = (c.bid / snap.last_price) * (365.0 / c.dte) * 100 if snap.last_price and c.dte else 0
                     if roc < self.cfg.roc_min_cc:

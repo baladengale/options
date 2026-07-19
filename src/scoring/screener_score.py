@@ -243,15 +243,15 @@ def _contract_penalty(c: OptionSnapshot, delta: float, roc: float) -> float:
     # ═══ DTE WINDOW ═══
     if c.dte < _cfg_val(lambda cfg: cfg.dte_hard_block):
         penalty += cp('dte_hard_block')
-    elif c.dte < 14:
+    elif c.dte < _cfg_val(lambda cfg: cfg.dte_weekly_max):
         penalty += cp('dte_weekly_penalty')
     elif c.dte < _cfg_val(lambda cfg: cfg.dte_penalty_start):
         penalty += cp('dte_short_penalty')
     elif c.dte < _cfg_val(lambda cfg: cfg.dte_optimal_min):
-        penalty += 0.5
+        penalty += cp('dte_intermediate_penalty')
     elif c.dte <= _cfg_val(lambda cfg: cfg.dte_optimal_max):
         penalty += cp('dte_optimal_bonus')
-    elif c.dte <= 60:
+    elif c.dte <= _cfg_val(lambda cfg: cfg.dte_long_start):
         penalty += 0.0
     else:
         penalty += cp('dte_long_penalty')
@@ -278,17 +278,18 @@ def _contract_penalty(c: OptionSnapshot, delta: float, roc: float) -> float:
     elif roc > 18:
         penalty += cp('medium_roc_bonus')
     elif roc > 15:
-        penalty -= 0.3
+        penalty += cp('low_roc_bonus')
 
     # Reward high IV
-    if c.implied_vol > 35:
+    iv_threshold = cp('high_iv_threshold')
+    if c.implied_vol and c.implied_vol > iv_threshold:
         penalty += cp('high_iv_bonus')
 
     # Low volume
     if c.volume < 50:
         penalty += cp('low_volume_penalty')
     elif c.volume < _cfg_val(lambda cfg: cfg.volume_min):
-        penalty += 2.0
+        penalty += cp('min_volume_penalty')
 
     return penalty
 
@@ -307,9 +308,6 @@ def _csp_roc(bid: float, strike: float, dte: int) -> float:
         return 0.0
     return (bid / strike) * (365.0 / dte) * 100
 
-
-def _regime_multiplier(regime: str) -> float:
-    return {'BULLISH': 0.85, 'NEUTRAL': 1.0, 'VOLATILE': 1.2, 'BEARISH': 1.5}.get(regime, 1.0)
 
 
 def _reason(ticker_score: float, contract_score: float, strat: str) -> str:

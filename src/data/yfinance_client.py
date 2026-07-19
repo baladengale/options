@@ -656,18 +656,6 @@ class YFinanceClient:
         # Tally → regime score (-5 to +5)
         macro.regime_score = max(-5, min(5, votes))
 
-        # Position sizing multiplier
-        if macro.regime_score >= 3:
-            macro.position_mult = 1.0    # full size
-        elif macro.regime_score >= 1:
-            macro.position_mult = 0.75   # 75% size
-        elif macro.regime_score >= -1:
-            macro.position_mult = 0.50   # 50% size
-        elif macro.regime_score >= -3:
-            macro.position_mult = 0.25   # 25% size
-        else:
-            macro.position_mult = 0.0    # defensive — no new positions
-
         # Overall regime label
         if macro.regime_score >= 3:
             macro.market_regime = 'BULLISH'
@@ -679,6 +667,10 @@ class YFinanceClient:
             macro.market_regime = 'VOLATILE'
         else:
             macro.market_regime = 'BEARISH'
+
+        # Position sizing from config (rules.yaml regime.position_mult)
+        from src.config import get_config
+        macro.position_mult = get_config().position_mult(macro.market_regime)
 
         return macro
 

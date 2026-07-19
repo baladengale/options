@@ -69,13 +69,18 @@ def _score_holding(snap: StockSnapshot, ticker: str, yf_client, regime: str, reg
 
 def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
                   yf_client, regime: str, regime_mult: float,
-                  allow_below_basis: bool = False) -> Optional[dict]:
+                  allow_below_basis: Optional[bool] = None) -> Optional[dict]:
     """Find best covered call candidate for a stock holding.
     GOAL.md rule: Never sell CC below cost basis — unless allow_below_basis, the
     Decision #10 dead-zone path, where a flagged below-basis candidate is
     surfaced (with months-to-recover) for the operator to consciously choose."""
     if shares < 100:
         return None
+
+    cfg = get_config()
+    if allow_below_basis is None:
+        allow_below_basis = not cfg._data.get('cc_management', {}).get('never_sell_below_cost_basis', True)
+    cp = lambda key: cfg.contract_penalty(key)
 
     contracts = moomoo.get_option_snapshots(f'US.{ticker}', dte_min=7, dte_max=60)
     best = None
@@ -87,7 +92,7 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
         # GOAL.md: Never sell CC below cost basis (bypassed only on the flagged path)
         if not allow_below_basis and c.strike <= cost_basis:
             continue
-        if (c.bid or 0) <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
+        if (c.bid or 0) <= 0 or (c.open_interest or 0) < cfg.oi_min or (c.volume or 0) < 10:
             continue
         if (c.delta or 0) < 0.15 or (c.delta or 0) > 0.35:
             continue
@@ -98,16 +103,18 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
         if roc < 8.0:
             continue
 
-        # Penalty scoring
+        # Penalty scoring — from config/rules.yaml
         penalty = 0.0
-        if c.dte < 7:            penalty += 99
-        elif c.dte < 14:         penalty += 3.0
-        elif c.dte < 21:         penalty += 1.5
-        elif 30 <= c.dte <= 45:  penalty -= 0.5
-        if (c.open_interest or 0) < 100:  penalty += 1.5
-        elif (c.open_interest or 0) < 500: penalty += 0.5
-        if roc > 24:             penalty -= 1.5
-        elif roc > 18:           penalty -= 0.8
+        if c.dte < cfg.dte_hard_block:            penalty += cp('dte_hard_block')
+        elif c.dte < cfg.dte_weekly_max:          penalty += cp('dte_weekly_penalty')
+        elif c.dte < cfg.dte_penalty_start:       penalty += cp('dte_short_penalty')
+        elif cfg.dte_optimal_min <= c.dte <= cfg.dte_optimal_max:
+            penalty += cp('dte_optimal_bonus')
+        if (c.open_interest or 0) < 100:          penalty += cp('low_oi_penalty')
+        elif (c.open_interest or 0) < cfg.oi_min: penalty += cp('medium_oi_penalty')
+        if roc > 24:                               penalty += cp('high_roc_bonus')
+        elif roc > 18:                             penalty += cp('medium_roc_bonus')
+        elif roc > 15:                             penalty += cp('low_roc_bonus')
 
         if penalty < best_score:
             best_score = penalty
@@ -175,7 +182,7 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     elif strategy == 'CC' and delta >= cfg.stop_delta_cc_critical:
         score += 1.5
         decision = '⚠️  DELTA WARN — Δ≥0.50, assignment risk'
-    elif strategy == 'CSP' and delta >= 0.50:
+    elif strategy == 'CSP' and delta >= cfg.stop_delta_csp_itm:
         score += 1.0
         if 'CLOSE' not in decision and 'STOP' not in decision:
             decision = '⚠️  ITM — assignment risk'
@@ -195,23 +202,29 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     if profit_captured < 0:  # position is underwater
         loss_multiple = abs(profit_captured) / 100  # -150% → 1.5× loss
         tree = 'roll / take assignment / exit' if strategy == 'CSP' else 'close or roll for credit'
+        far_close = cfg.stop_loss('far_close', 3.0)
+        far_alert = cfg.stop_loss('far_alert', 2.0)
+        mid_close = cfg.stop_loss('mid_close', 2.0)
+        mid_alert = cfg.stop_loss('mid_alert', 1.0)
+        near_close = cfg.stop_loss('near_close', 1.5)
+        near_alert = cfg.stop_loss('near_alert', 0.5)
 
         if dte > 30:
-            if loss_multiple >= 3.0:
-                score += 2.0; decision = f'🛑 3× STOP TIER — {tree}'
-            elif loss_multiple >= 2.0:
+            if loss_multiple >= far_close:
+                score += 2.0; decision = f'🛑 {far_close}× STOP TIER — {tree}'
+            elif loss_multiple >= far_alert:
                 score += 1.0
-                if 'STOP' not in decision: decision = '⚠️  STOP ALERT — 2× premium lost'
+                if 'STOP' not in decision: decision = f'⚠️  STOP ALERT — {far_alert}× premium lost'
         elif dte > 21:
-            if loss_multiple >= 2.0:
-                score += 2.0; decision = f'🛑 2× STOP TIER — {tree}'
-            elif loss_multiple >= 1.0:
+            if loss_multiple >= mid_close:
+                score += 2.0; decision = f'🛑 {mid_close}× STOP TIER — {tree}'
+            elif loss_multiple >= mid_alert:
                 score += 1.0
-                if 'STOP' not in decision: decision = '⚠️  STOP ALERT — 1× premium lost'
+                if 'STOP' not in decision: decision = f'⚠️  STOP ALERT — {mid_alert}× premium lost'
         else:  # dte <= 21
-            if loss_multiple >= 1.5:
-                score += 2.5; decision = f'🛑 1.5× STOP TIER (gamma) — {tree}'
-            elif loss_multiple >= 0.5:
+            if loss_multiple >= near_close:
+                score += 2.5; decision = f'🛑 {near_close}× STOP TIER (gamma) — {tree}'
+            elif loss_multiple >= near_alert:
                 score += 1.0
                 if 'STOP' not in decision: decision = '⚠️  NEAR STOP — monitor closely'
 

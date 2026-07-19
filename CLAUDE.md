@@ -83,7 +83,7 @@ Use WebSearch to gather current news, analyst actions, and sector context for th
 
 ## Key Metrics for Option Selection
 
-- **Delta**: CC 0.20–0.30, CSP 0.15–0.25 (normal regime). See regime-adjusted deltas below.
+- **Delta**: CC 0.20–0.30, CSP 0.20–0.30 (normal regime). See regime-adjusted deltas below.
 - **DTE**: 30–45 days for optimal theta decay.
 - **IV Rank > 30**: sell premium when volatility is elevated relative to its own history.
 - **Annualized return on capital**: target >12% annualized for CSPs, >8% for covered calls.
@@ -97,8 +97,8 @@ Use WebSearch to gather current news, analyst actions, and sector context for th
 
 | Regime | VIX | Position Size | Cash Reserve | CSP Delta | CC Delta |
 |--------|-----|:---:|:---:|:---:|:---:|
-| BULLISH | < 15 | 100% | ≥ 15% | 0.20-0.30 | 0.20-0.30 |
-| NEUTRAL | 15-20 | 75% | ≥ 20% | 0.20-0.30 | 0.20-0.30 |
+| BULLISH | < 12 | 80% | ≥ 15% | 0.20-0.30 | 0.20-0.30 |
+| NEUTRAL | 12-20 | 75% | ≥ 20% | 0.20-0.30 | 0.20-0.30 |
 | CAUTIOUS | 20-25 | 50% | ≥ 25% | 0.15-0.25 | 0.25-0.35 |
 | VOLATILE | 25-30 | 25% | ≥ 30% | 0.10-0.20 | 0.30-0.40 |
 | BEARISH | > 30 | 0% | ≥ 35% | NONE | existing only |
@@ -150,8 +150,8 @@ Sync from Moomoo → Trend/Momentum → Options Chain → Fundamental → Correl
 The WHEEL_SCORE is a weighted composite (0-100) with 5 components:
 - **Trend/Momentum** (25%): SMA alignment (20/50/200), ADX strength, RSI(14), MACD
 - **Options Chain** (25%): spread, OI, volume, IV/HV, term structure
-- **Fundamental** (20%): revenue growth, EPS quality, FCF yield, D/E, PEG
-- **Sentiment** (15%): deterministic composite of trend + momentum + IV + volume + price action
+- **Fundamental** (15%): revenue growth, EPS quality, FCF yield, D/E, PEG
+- **Sentiment** (20%): deterministic composite of trend + momentum + IV + volume + price action
 - **Correlation** (15%): 1Y rolling correlation vs V — if >0.8, hard fail
 
 14 hard constraint gates. Any single failure → score = 0, signal = AVOID.

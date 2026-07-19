@@ -15,7 +15,7 @@ These rules are based on industry research (TastyTrade 200K+ backtested trades, 
 
 | Regime | VIX | Position Size | Cash Reserve | Action |
 |--------|-----|:---:|:---:|--------|
-| BULLISH | < 15 | 100% | ≥ 15% | Full size, normal delta |
+| BULLISH | < 12 | 80% | ≥ 15% | Full size, normal delta |
 | NEUTRAL | 15-20 | 75% | ≥ 20% | Normal entries, standard delta |
 | CAUTIOUS | 20-25 | 50% | ≥ 25% | Reduced size, tighter delta |
 | VOLATILE | 25-30 | 25% | ≥ 30% | Minimal new entries, tighter stops |

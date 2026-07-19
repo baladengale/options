@@ -105,6 +105,14 @@ class Config:
         return self._data['options']['dte']['penalty_start']
 
     @property
+    def dte_weekly_max(self) -> int:
+        return self._data['options']['dte'].get('weekly_max', 14)
+
+    @property
+    def dte_long_start(self) -> int:
+        return self._data['options']['dte'].get('long_start', 60)
+
+    @property
     def dte_hard_block(self) -> int:
         return self._data['options']['dte']['hard_block']
 
@@ -179,6 +187,22 @@ class Config:
     def max_margin_pct(self) -> float:
         return self._data['position_limits']['max_margin_pct']
 
+    @property
+    def csp_capital_coverage(self) -> float:
+        return self._data['position_limits'].get('csp_capital_coverage', 1.0)
+
+    @property
+    def bp_margin_buffer(self) -> float:
+        return self._data['position_limits'].get('bp_margin_buffer', 0.50)
+
+    @property
+    def cash_buffer_warn(self) -> float:
+        return self._data['position_limits'].get('cash_buffer_warn', 0.25)
+
+    @property
+    def cash_buffer_critical(self) -> float:
+        return self._data['position_limits'].get('cash_buffer_critical', 0.10)
+
     # ═══════════════════════════════════════════════════════════
     # CSP PAUSE
     # ═══════════════════════════════════════════════════════════
@@ -218,6 +242,10 @@ class Config:
     @property
     def stop_delta_csp_critical(self) -> float:
         return self._data['stop_loss']['delta']['csp_critical']
+
+    @property
+    def stop_delta_csp_itm(self) -> float:
+        return self._data['stop_loss']['delta'].get('csp_itm', 0.50)
 
     @property
     def stop_delta_csp_decision(self) -> float:

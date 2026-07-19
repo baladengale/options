@@ -45,10 +45,10 @@ options:
   # Delta ranges per strategy and regime
   delta:
     csp:
-      BULLISH:     [0.15, 0.30]
-      NEUTRAL:     [0.15, 0.30]
-      CAUTIOUS:    [0.10, 0.25]
-      VOLATILE:    [0.05, 0.20]
+      BULLISH:     [0.20, 0.30]
+      NEUTRAL:     [0.20, 0.30]
+      CAUTIOUS:    [0.15, 0.25]
+      VOLATILE:    [0.10, 0.20]
       BEARISH:     [0, 0]           # no CSPs
     cc:
       BULLISH:     [0.20, 0.30]
@@ -64,7 +64,9 @@ options:
     optimal_min: 30       # sweet spot minimum
     optimal_max: 45       # sweet spot maximum
     penalty_start: 21     # DTE below this gets penalty
+    weekly_max: 14        # DTE below this gets weekly penalty
     hard_block: 7         # DTE below this = hard block
+    long_start: 60        # DTE above this gets long penalty
 
   # Return on Capital minimums (%)
   roc_min:
@@ -96,6 +98,7 @@ scoring:
   # Contract penalty adjustments
   contract_penalty:
     dte_optimal_bonus: -0.5      # 30-45 DTE bonus
+    dte_intermediate_penalty: 0.5 # 21-30 DTE slight penalty
     dte_short_penalty: 1.5        # 14-21 DTE penalty
     dte_weekly_penalty: 3.0       # 7-14 DTE penalty
     dte_hard_block: 99            # < 7 DTE block
@@ -105,10 +108,13 @@ scoring:
     wide_spread_penalty: 2.0      # spread > 5%
     medium_spread_penalty: 1.0    # spread > 2%
     low_volume_penalty: 1.0       # volume < 50
+    min_volume_penalty: 2.0       # volume < volume_min
     low_delta_penalty: 0.5        # delta < 0.15
     high_roc_bonus: -1.5          # RoC > 24%
     medium_roc_bonus: -0.8        # RoC > 18%
-    high_iv_bonus: -0.5           # IV > 35%
+    low_roc_bonus: -0.3           # RoC > 15%
+    high_iv_bonus: -0.5           # IV > high_iv_threshold
+    high_iv_threshold: 35         # IV above this = elevated premium bonus
 
 # ── Position Sizing Hard Limits ──
 position_limits:
@@ -116,9 +122,13 @@ position_limits:
   max_sector_pct: 0.25              # 25% max per sector
   max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
-  max_open_positions: 8             # total positions, stocks + options (GOAL.md §3)
+  max_open_positions: 8             # max active CC/CSP options only (wheel strategy bandwidth)
   max_daily_new_positions: 2        # new trades per day
   max_margin_pct: 0.30              # 30% margin utilization max
+  csp_capital_coverage: 1.0         # must cover 100% of CSP notional with cash+BP
+  bp_margin_buffer: 0.50            # 50% of buying power available as margin buffer
+  cash_buffer_warn: 0.25            # cash buffer below this = warning
+  cash_buffer_critical: 0.10        # cash buffer below this = block new trades
 
 # ── CSP Pause Triggers ──
 csp_pause:
@@ -145,6 +155,7 @@ stop_loss:
   # Layer 2: Delta gates (absolute value)
   delta:
     csp_critical: 0.60   # CSP |Δ| > 0.60 → too directional, cut it
+    csp_itm: 0.50        # CSP |Δ| ≥ 0.50 → deep ITM, assignment imminent
     csp_decision: 0.40   # CSP |Δ| ≥ 0.40 → "decision time": plan roll / take assignment / exit
     cc_critical: 0.50    # CC Δ > 0.50 → prepare for assignment
     cc_warn: 0.40        # CC Δ > 0.40 → monitor closely

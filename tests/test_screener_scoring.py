@@ -2,7 +2,7 @@
 Screener scoring engine — unit tests for pure functions.
 
 Tests: _csp_roc, _trend_composite, _score_technical, _score_macro,
-_score_external, _contract_penalty, _regime_multiplier, _reason, _score_stars.
+_score_external, _contract_penalty, _reason, _score_stars.
 
 All functions tested are pure — no moomoo connection needed.
 """
@@ -19,7 +19,7 @@ from src.data.models import StockSnapshot, OptionSnapshot
 
 # Import scoring functions from screener
 from scripts.screener import (
-    _csp_roc, _regime_multiplier, _reason, _score_stars,
+    _csp_roc, _reason, _score_stars,
     _score_macro, _score_external, _score_technical, _score_fundamental,
     _score_options_eco, _trend_composite, _contract_penalty,
     _compute_ticker_score,
@@ -89,15 +89,6 @@ def test_csp_roc_zero_dte():
 
 # ═══════════════════════════════════════════════════════════════
 # REGIME
-# ═══════════════════════════════════════════════════════════════
-
-def test_regime_multiplier():
-    assert _regime_multiplier('BULLISH') == 0.85
-    assert _regime_multiplier('NEUTRAL') == 1.0
-    assert _regime_multiplier('VOLATILE') == 1.2
-    assert _regime_multiplier('BEARISH') == 1.5
-
-
 # ═══════════════════════════════════════════════════════════════
 # TREND COMPOSITE
 # ═══════════════════════════════════════════════════════════════

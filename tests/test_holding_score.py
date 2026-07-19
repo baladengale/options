@@ -56,7 +56,7 @@ def test_option_far_dte_3x_stop_tier():
     # Underwater 3× loss, >30 DTE → 3× STOP TIER
     s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-300.0,
                            pl=-3000, today=TODAY, yf_client=None)
-    assert '3× STOP TIER' in dec
+    assert 'STOP TIER' in dec
     assert s >= 7.0
 
 

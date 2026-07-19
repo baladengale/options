@@ -54,7 +54,7 @@ from src.scoring.screener_score import (
     _compute_ticker_score, _contract_penalty, _trend_composite,
     _score_technical, _score_options_eco, _score_fundamental,
     _score_external, _score_macro, _csp_roc,
-    _score_stars, _reason, _compute_chain_gex, _regime_multiplier,
+    _score_stars, _reason, _compute_chain_gex,
 )
 
 # Watchlist from CLAUDE.md
@@ -282,7 +282,7 @@ def main():
 
                 # ── CSP candidates ──
                 if not args.cc_only and c.option_type == 'PUT':
-                    if c.bid <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
+                    if c.bid <= 0 or (c.open_interest or 0) < _cfg_val(lambda c: c.oi_min) or (c.volume or 0) < 10:
                         continue
                     # CSP delta check from config (regime-adjusted)
                     abs_d = abs(c.delta or 0)
@@ -341,7 +341,7 @@ def main():
 
                 # ── CC candidates ──
                 if not args.csp_only and c.option_type == 'CALL' and has_shares:
-                    if c.bid <= 0 or (c.open_interest or 0) < 10 or (c.volume or 0) < 10:
+                    if c.bid <= 0 or (c.open_interest or 0) < _cfg_val(lambda c: c.oi_min) or (c.volume or 0) < 10:
                         continue
                     # CC delta check from config (regime-adjusted)
                     cc_delta_range = _cfg_val(lambda c: c.delta_range('cc', regime))

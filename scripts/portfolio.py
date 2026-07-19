@@ -369,6 +369,8 @@ def _print_overlap(reports, today):
 
 
 def _print_guardrails(pf, nlv):
+    # Build position list: only stocks with active options for wheel strategy
+    tickers_with_options = {o['ticker'] for o in pf.options.values()}
     gc_positions = []
     for ticker, pos in pf.stocks.items():
         csp_liability = sum(
@@ -376,19 +378,23 @@ def _print_guardrails(pf, nlv):
             for o in pf.options.values()
             if o['ticker'] == ticker and o['type'] == 'PUT'
         )
-        gc_positions.append({
-            'ticker': ticker, 'notional': pos.get('mv', 0),
-            'sector': SECTOR_MAP.get(ticker, 'Unknown'), 'csp_liability': csp_liability,
-        })
+        # Only include positions with active options for wheel management
+        if ticker in tickers_with_options:
+            gc_positions.append({
+                'ticker': ticker, 'notional': pos.get('mv', 0),
+                'sector': SECTOR_MAP.get(ticker, 'Unknown'), 'csp_liability': csp_liability,
+            })
     gc = GuardrailChecker(net_liq=nlv, cash=pf.funds.liquid, buying_power=pf.funds.buying_power,
                           open_positions=gc_positions)
     gr = gc.check()
+    # Override position count to use option contracts (not tickers)
+    gr.open_positions = len(pf.options)
 
     print(f"{'='*90}")
     print(f"  🛡️  GUARDRAILS")
     print(f"{'='*90}")
     print(f"  Net Liq: ${nlv:,.0f} | Liquid: ${pf.funds.liquid:,.0f} ({gr.cash_buffer_pct:.0f}%) | "
-          f"Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS()})")
+          f"Option Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS()})")
     print(f"  Max single: {gr.max_single_position_pct:.0f}% (limit 15%) | "
           f"Max sector: {gr.max_sector_pct:.0f}% (limit 25%)")
     if gr.worst_case_shortfall > 0:
