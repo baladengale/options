@@ -269,6 +269,19 @@ class MoomooClient:
 
         return results
 
+    def get_option_snapshots_resilient(
+        self, ticker: str, dte_min: int = 7, dte_max: int = 90
+    ) -> list[OptionSnapshot]:
+        """Fetch option chain with retry on empty results. No yfinance fallback."""
+        import time
+        for attempt in range(2):
+            if attempt > 0:
+                time.sleep(1)
+            contracts = self.get_option_snapshots(ticker, dte_min=dte_min, dte_max=dte_max)
+            if contracts:
+                return contracts
+        return []
+
     def get_all_option_snapshots(
         self, ticker: str, dte_min: int = 15, dte_max: int = 60
     ) -> list[OptionSnapshot]:

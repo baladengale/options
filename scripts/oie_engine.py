@@ -39,14 +39,15 @@ from src.analysis.sentiment import get_macro_context
 from src.data.yfinance_client import YFinanceClient
 from src.config import get_config
 
-# ── Import scoring functions from screener ──
-from scripts.screener import (
+# ── Import scoring from src/ (NOT from scripts.screener — scripts never import scripts) ──
+from src.scoring.screener_score import (
     _compute_ticker_score, _contract_penalty, _trend_composite,
-    _score_technical, _score_options_eco, _score_fundamental,
-    _score_external, _score_macro, _csp_roc,
-    _fetch_option_chain_resilient, _fetch_live_watchlist,
-    _fetch_live_portfolio,
+    _csp_roc,
 )
+from src.filters.contract_filters import passes_all_gates, cc_roc
+from src.data.watchlist import fetch_live_watchlist
+from src.data.portfolio_loader import fetch_live_portfolio
+from src.data.models import TradeCandidate
 
 # ── Logging ──
 from src.logging_setup import get_logger
@@ -135,7 +136,7 @@ class OIEEngine:
 
         print("📋 Connecting to REAL account...")
         try:
-            stocks_dict, cash, bp, fund, existing_opts = _fetch_live_portfolio()
+            stocks_dict, cash, bp, fund, existing_opts = fetch_live_portfolio()
         except Exception as e:
             print(f"❌ Failed to fetch REAL portfolio: {e}")
             return False
@@ -320,7 +321,7 @@ class OIEEngine:
 
             # ── 2. Load real portfolio (for CC share check) + MTM options ──
             try:
-                self._real_portfolio, _, _, _, _ = _fetch_live_portfolio()
+                self._real_portfolio, _, _, _, _ = fetch_live_portfolio()
             except Exception:
                 self._real_portfolio = {}
             active_options = self.db.get_active_options()
@@ -675,30 +676,13 @@ class OIEEngine:
     # ═══════════════════════════════════════════════════════════
 
     def _screen_candidates(self, stock_prices: dict) -> list:
-        """Run screener against paper portfolio. Returns ranked candidates.
+        """Run screener against paper portfolio. Returns ranked TradeCandidate list.
         Optimized: batch snapshots, cached history, tiered DTE, pre-filter."""
-        from dataclasses import dataclass
-
-        @dataclass
-        class Candidate:
-            ticker: str
-            strategy: str
-            score: float
-            strike: float
-            expiry: str
-            dte: int
-            delta: float
-            bid: float
-            iv: float
-            annualized_roc_pct: float
-            open_interest: int
-            capital_required: float
-
         candidates = []
         if not self.moomoo:
             return candidates
 
-        watchlist = _fetch_live_watchlist(self.moomoo)
+        watchlist = fetch_live_watchlist(self.moomoo.ctx)
         cash = float(self.db.get_state('cash', '0'))
         fund = float(self.db.get_state('fund', '0'))
 
@@ -771,46 +755,34 @@ class OIEEngine:
                 iv_rank=50.0,
             )
 
-            contracts = _fetch_option_chain_resilient(
-                self.moomoo, ticker, dte_min=7, dte_max=90)
+            contracts = self.moomoo.get_option_snapshots_resilient(
+                ticker, dte_min=7, dte_max=90)
             if not contracts:
                 continue
 
             for c in contracts:
                 # Basic filters (matching screener logic)
-                if c.bid <= 0 or (c.open_interest or 0) < self.cfg.oi_min or (c.volume or 0) < 10:
-                    continue
-                iv_sane = c.implied_vol and 0 < c.implied_vol < 500
-                if not iv_sane:
-                    continue
-                vrp_ok = True
-                if c.implied_vol and snap.hv_30d and snap.hv_30d > 0:
-                    vrp_ok = c.implied_vol > snap.hv_30d * 0.8
-                if not vrp_ok:
-                    continue
-
                 abs_d = abs(c.delta or 0)
 
                 # CSP
                 if c.option_type == 'PUT' and not has_shares:
-                    csp_delta = self.cfg.delta_range('csp', regime)
-                    if abs_d < csp_delta[0] or abs_d > csp_delta[1]:
+                    ok, reason = passes_all_gates(
+                        c, 'CSP', regime, snap, cfg=self.cfg,
+                        skip_concentration=self.force,
+                        skip_cash_buffer=self.force,
+                        net_liq=net_liq, cash=cash,
+                        buying_power=cash * 2)
+                    if not ok:
                         continue
                     roc = _csp_roc(c.bid, c.strike, c.dte)
-                    if roc < self.cfg.roc_min_csp:
-                        continue
                     capital = c.strike * 100
-                    if capital > net_liq * 0.15:
-                        continue
-                    if capital > cash * 0.8:
-                        continue
 
                     contract_score = ticker_score + _contract_penalty(c, abs_d, roc)
                     if contract_score <= 5:
                         log.info(f"CSP|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={abs_d:.3f}|"
                                  f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
                                  f"RoC={roc:.1f}%|score={contract_score:.1f}")
-                    candidates.append(Candidate(
+                    candidates.append(TradeCandidate(
                         ticker=short, strategy='CSP',
                         score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
@@ -821,26 +793,30 @@ class OIEEngine:
 
                 # CC
                 if c.option_type == 'CALL' and has_shares:
-                    cc_delta = self.cfg.delta_range('cc', regime)
-                    if c.delta < cc_delta[0] or c.delta > cc_delta[1]:
+                    ok, reason = passes_all_gates(
+                        c, 'CC', regime, snap, cfg=self.cfg,
+                        skip_concentration=True,
+                        skip_cash_buffer=True,
+                        net_liq=net_liq, cash=cash,
+                        buying_power=cash * 2)
+                    if not ok:
                         continue
-                    roc = (c.bid / snap.last_price) * (365.0 / c.dte) * 100 if snap.last_price and c.dte else 0
-                    if roc < self.cfg.roc_min_cc:
-                        continue
+                    roc = cc_roc(c.bid, snap.last_price, c.dte)
+                    capital = snap.last_price * 100
 
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
                     if contract_score <= 5:
                         log.info(f"CC|{short}|${c.strike:.0f}|{c.expiry}|DTE={c.dte}|Δ={c.delta:.3f}|"
                                  f"bid={c.bid:.2f}|IV={c.implied_vol:.0f}%|OI={c.open_interest}|"
                                  f"RoC={roc:.1f}%|score={contract_score:.1f}")
-                    candidates.append(Candidate(
+                    candidates.append(TradeCandidate(
                         ticker=short, strategy='CC',
                         score=round(contract_score, 2),
                         strike=c.strike, expiry=c.expiry, dte=c.dte,
                         delta=c.delta, bid=c.bid, iv=c.implied_vol,
                         annualized_roc_pct=round(roc, 1),
                         open_interest=c.open_interest,
-                        capital_required=snap.last_price * 100))
+                        capital_required=capital))
 
             time.sleep(0.1)  # light rate limit between tickers
 

@@ -180,3 +180,28 @@ class MarketRegime:
     spy_sma_50: Optional[float] = None
     spy_sma_200: Optional[float] = None
     regime: str = 'UNKNOWN'  # BULLISH | NEUTRAL | VOLATILE | BEARISH
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRADE CANDIDATE (screened option recommendation)
+# ═══════════════════════════════════════════════════════════════
+
+@dataclass
+class TradeCandidate:
+    """A screened option trade candidate — shared by screener and OIE engine."""
+    ticker: str
+    strategy: str              # CSP or CC
+    score: float               # 1-10, lower = better
+    strike: float
+    expiry: str
+    dte: int
+    delta: float
+    bid: float
+    ask: float = 0.0
+    premium: float = 0.0       # premium per contract
+    annualized_roc_pct: float = 0.0
+    iv: float = 0.0
+    iv_rank: float = 50.0
+    open_interest: int = 0
+    capital_required: float = 0.0
+    reason: str = ''

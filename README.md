@@ -65,21 +65,38 @@ python3 scripts/market_sentiment.py
 ## Architecture
 
 ```
-Moomoo REAL account (read-only poll)
-       │
-       ├── portfolio.py        ──→ Consolidated: state + P&L + health (funds, positions, income, decisions, overlap, guardrails)
-       ├── screener.py         ──→ Watchlist screening (direct moomoo read)
-       ├── market_data.py      ──→ Single-ticker deep dive
-       ├── market_sentiment.py ──→ Macro regime + sentiment
-       │
-       └── oie_engine.py ──→ db/oie_paper.db
-             ├── paper_positions   (option positions + lifecycle)
-             ├── paper_trades      (full audit trail)
-             ├── paper_snapshots   (P&L over time)
-             └── paper_state       (engine resume state)
+┌─────────────────────────────────────────────────────────────┐
+│                    DATA LAYER (src/data/)                    │
+│  moomoo_client  │  yfinance_client  │  portfolio_loader     │
+│  watchlist      │  models           │  guardrails           │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                  FILTERS LAYER (src/filters/)                │
+│  contract_filters — liquidity, delta, IV, VRP, RoC gates    │
+│  Single source of truth. Used by all scripts.               │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                 SCORING LAYER (src/scoring/)                 │
+│  screener_score — ticker scoring + contract penalty         │
+│  holding_score — position scoring + CC hunting              │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                  SCRIPTS (scripts/) — thin wrappers          │
+│  portfolio.py  │  screener.py  │  oie_engine.py             │
+│  market_data.py│ market_sentiment.py                        │
+│  argparse → fetch → call src/ → display                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Key principle**: Scripts poll moomoo directly, analyze, and simulate. Never submit orders. One DB for paper trading only.
+**Key principles**:
+- **Layered**: `src/` owns all logic. `scripts/` are thin orchestrators — no business logic.
+- **No cross-script imports**: `oie_engine.py` imports from `src/`, never from `scripts/screener.py`.
+- **Config-driven**: every threshold, weight, and limit in `config/rules.yaml`. No hardcoded values.
+- **Read-only**: scripts poll moomoo, analyze, and simulate. Never submit orders.
+- **One DB**: `db/oie_paper.db` for paper trading only. Real portfolio is live from moomoo.
 
 ---
 
@@ -90,18 +107,21 @@ options/
 ├── db/
 │   └── oie_paper.db                   # Paper trading portfolio (4 tables)
 ├── config/
-│   └── rules.yaml                     # Master config: all parameters, thresholds, limits
-├── src/
+│   └── rules.yaml                     # Master config: ALL parameters, thresholds, limits
+├── src/                               # ← ALL business logic lives here
+│   ├── filters/                       # NEW — shared contract gates (single source of truth)
+│   │   └── contract_filters.py        #   Liquidity, delta, IV, VRP, RoC, concentration gates
 │   ├── data/
-│   │   ├── portfolio_loader.py          # Shared: fetch_funds, fetch_positions, fetch_orders, fetch_portfolio
-│   │   ├── models.py                  # Dataclasses: StockSnapshot, OptionSnapshot
-│   │   ├── moomoo_client.py           # Moomoo OpenD data client (quotes + chains)
-│   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro
+│   │   ├── portfolio_loader.py        # Shared: fetch_portfolio, fetch_live_portfolio
+│   │   ├── watchlist.py               # Live watchlist fetch from moomoo
+│   │   ├── models.py                  # Dataclasses: StockSnapshot, OptionSnapshot, TradeCandidate
+│   │   ├── moomoo_client.py           # Moomoo OpenD data client (quotes + resilient chain fetch)
+│   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro, regime
 │   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, ADX, HV)
 │   │   ├── oie_db.py                  # OIE paper portfolio DB
 │   │   └── guardrails.py              # Portfolio size/risk limits (shared)
 │   ├── scoring/
-│   │   ├── screener_score.py          # Watchlist scoring (extracted from screener.py)
+│   │   ├── screener_score.py          # Ticker scoring + contract penalty (shared)
 │   │   └── holding_score.py           # Position scoring + CC hunting
 │   ├── risk/
 │   │   ├── overlap.py                 # Put/call overlap analysis
@@ -114,8 +134,8 @@ options/
 │   │   └── thesis.py                  # Investment thesis evaluation
 │   ├── config.py                      # Typed config loader from rules.yaml
 │   └── logging_setup.py               # Shared logging → logs/options.log
-├── scripts/
-│   ├── portfolio.py                   # Consolidated: state + P&L + health (replaces 4 former scripts)
+├── scripts/                           # ← THIN wrappers: argparse → src/ → display
+│   ├── portfolio.py                   # Consolidated: state + P&L + health
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
 │   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
@@ -129,12 +149,15 @@ options/
 │   ├── test_portfolio_loader.py       # Portfolio loader tests
 │   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
 │   ├── test_holdings_exit.py          # Exit framework tests
-│   └── ...                            # 420 tests total
+│   └── ...                            # 418 tests total
 ├── specs/                             # Research + architecture docs
+├── .claude/skills/                    # Claude Code skills (oie, oie-paper)
 ├── CLAUDE.md                          # AI coding instructions
 ├── GOAL.md                            # Investment goals
 └── README.md                          # This file
 ```
+
+**Architecture principle**: `scripts/` are thin orchestrators (argparse → fetch data → call `src/` → display). `src/` owns all business logic. No script imports from another script. Config is the single source of truth for all thresholds.
 
 ---
 
@@ -179,12 +202,13 @@ python3 scripts/screener.py --log             # Log picks to trade_log table
 ```
 🌍 VIX 15.8 | CAUTIOUS | Size: 50% | 10Y 4.6%
 
-  # Ticker   Strat  Score    Strike       Expiry  DTE      Δ     Bid    RoC     IV     OI   Capital   Reason
-  1 NVDA       CC   2.6 $  220.00   2026-08-14  36 0.316 $  5.00  24.8%  41.1%  1,045 $  1,200   Strong CC
-  2 AVGO       CSP  2.8 $  350.00   2026-08-21  43 0.244 $ 10.95  26.6%  52.3%  5,569 $ 35,000   Excellent
-
-  💡 Best CSP: AVGO $350 2026-08-21 Δ0.24 RoC 26.6% Score 2.8
-  💡 Best CC:  NVDA $220 2026-08-14 Δ0.32 RoC 24.8% Score 2.6
+==========================================================================================
+  🎯 TOP 2 TRADES  (1 = best, 10 = worst)
+==========================================================================================
+     Ticker Strat     Strike       Expiry DTE      Δ      Bid     RoC      IV     OI    Capital  Score  Reason
+  ─── ────── ───── ────────── ──────────── ─── ────── ──────── ─────── ─────── ────── ────────── ──────  ──────────────────
+  💡  1 NVDA     CC    $220.00   2026-08-14  36 0.316    $5.00   24.8%   41.1%   1045   $43,100 ⭐2     Strong CC candidate
+  💡  2 AVGO     CSP    $350.00   2026-08-21  43 0.244   $10.95   26.6%   52.3%   5569   $35,000 ⭐3     Excellent CSP candidate
 ```
 
 ---

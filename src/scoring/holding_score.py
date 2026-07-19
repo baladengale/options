@@ -19,6 +19,8 @@ from typing import Optional
 
 from src.config import get_config
 from src.data.models import StockSnapshot
+from src.filters.contract_filters import passes_liquidity, passes_delta, iv_sane, passes_roc, cc_roc
+from src.scoring.screener_score import _contract_penalty
 
 
 def _score_holding(snap: StockSnapshot, ticker: str, yf_client, regime: str, regime_mult: float) -> float:
@@ -80,7 +82,6 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
     cfg = get_config()
     if allow_below_basis is None:
         allow_below_basis = not cfg._data.get('cc_management', {}).get('never_sell_below_cost_basis', True)
-    cp = lambda key: cfg.contract_penalty(key)
 
     contracts = moomoo.get_option_snapshots(f'US.{ticker}', dte_min=7, dte_max=60)
     best = None
@@ -92,29 +93,20 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
         # GOAL.md: Never sell CC below cost basis (bypassed only on the flagged path)
         if not allow_below_basis and c.strike <= cost_basis:
             continue
-        if (c.bid or 0) <= 0 or (c.open_interest or 0) < cfg.oi_min or (c.volume or 0) < 10:
+        if not passes_liquidity(c, cfg):
             continue
-        if (c.delta or 0) < 0.15 or (c.delta or 0) > 0.35:
+        ok, _ = passes_delta(c, 'CC', regime, cfg)
+        if not ok:
             continue
-        if not (c.implied_vol and 0 < c.implied_vol < 500):
-            continue
-
-        roc = (c.bid / snap.last_price) * (365.0 / c.dte) * 100 if snap.last_price and c.dte else 0
-        if roc < 8.0:
+        if not iv_sane(c):
             continue
 
-        # Penalty scoring — from config/rules.yaml
-        penalty = 0.0
-        if c.dte < cfg.dte_hard_block:            penalty += cp('dte_hard_block')
-        elif c.dte < cfg.dte_weekly_max:          penalty += cp('dte_weekly_penalty')
-        elif c.dte < cfg.dte_penalty_start:       penalty += cp('dte_short_penalty')
-        elif cfg.dte_optimal_min <= c.dte <= cfg.dte_optimal_max:
-            penalty += cp('dte_optimal_bonus')
-        if (c.open_interest or 0) < 100:          penalty += cp('low_oi_penalty')
-        elif (c.open_interest or 0) < cfg.oi_min: penalty += cp('medium_oi_penalty')
-        if roc > 24:                               penalty += cp('high_roc_bonus')
-        elif roc > 18:                             penalty += cp('medium_roc_bonus')
-        elif roc > 15:                             penalty += cp('low_roc_bonus')
+        roc = cc_roc(c.bid, snap.last_price, c.dte)
+        if not passes_roc(roc, 'CC', cfg):
+            continue
+
+        # Use shared contract penalty (all dimensions: DTE, OI, spread, delta, RoC, IV, volume)
+        penalty = _contract_penalty(c, c.delta or 0, roc)
 
         if penalty < best_score:
             best_score = penalty

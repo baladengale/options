@@ -17,11 +17,9 @@ Usage:
 
 import argparse
 import os
-import re
 import sys
 import time
 import warnings
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
@@ -30,25 +28,23 @@ warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), '..')))
 
-from moomoo import OpenSecTradeContext, TrdEnv, RET_OK
-
 from src.logging_setup import get_logger
 log = get_logger('screener')
 
 from src.data.moomoo_client import MoomooClient
-from src.data.portfolio_loader import fetch_portfolio
+from src.data.portfolio_loader import fetch_live_portfolio
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
-from src.data.models import StockSnapshot, OptionSnapshot
+from src.data.models import StockSnapshot, OptionSnapshot, TradeCandidate
+from src.data.watchlist import fetch_live_watchlist
+from src.filters.contract_filters import passes_all_gates, cc_roc
 from src.analysis.sentiment import (
     get_macro_context, get_ticker_sentiment, get_watchlist_sentiment,
     score_analyst_consensus, score_news_sentiment, score_earnings_blackout,
 )
 from src.config import get_config
 
-# Scoring engine now lives in src/ — re-exported here so scripts/oie_engine.py and
-# tests/test_screener_scoring.py can keep importing these names from scripts.screener
-# (single source of truth, no behavior change).
+# Scoring engine — re-exported for backward compatibility (oie_engine tests, test_screener_scoring)
 from src.scoring.screener_score import (
     _cfg_val,
     _compute_ticker_score, _contract_penalty, _trend_composite,
@@ -56,82 +52,6 @@ from src.scoring.screener_score import (
     _score_external, _score_macro, _csp_roc,
     _score_stars, _reason, _compute_chain_gex,
 )
-
-# Watchlist from CLAUDE.md
-# Default watchlist (used if moomoo watchlist fetch fails)
-_DEFAULT_WATCHLIST = [
-    'US.V', 'US.MSFT', 'US.GOOGL', 'US.AAPL', 'US.AMZN',
-    'US.NVDA', 'US.META', 'US.AVGO', 'US.ADBE', 'US.CRM', 'US.AMD',
-]
-
-
-def _fetch_option_chain_resilient(moomoo, ticker: str, dte_min: int = 7, dte_max: int = 90) -> list:
-    """
-    Fetch option chain with minimal retry on rate limits.
-    Single get_option_snapshots call with one 1s retry if empty.
-    No yfinance fallback — moomoo is the source of truth.
-    """
-    for attempt in range(2):
-        if attempt > 0:
-            time.sleep(1)
-        contracts = moomoo.get_option_snapshots(ticker, dte_min=dte_min, dte_max=dte_max)
-        if contracts:
-            return contracts
-    return []
-
-
-def _fetch_live_watchlist(moomoo) -> list[str]:
-    """Pull US stock tickers from moomoo watchlist group (name from config). Fallback to default."""
-    import re
-    group_name = _cfg_val(lambda c: c.moomoo_watchlist_group, 'Options')
-    try:
-        ret, data = moomoo.ctx.get_user_security(group_name)
-        if ret == RET_OK and data is not None and len(data) > 0:
-            tickers = []
-            for _, row in data.iterrows():
-                code = row['code']
-                # US stocks only — skip option contracts, crypto, indices
-                if (code.startswith('US.') and not re.search(r'\d{6}[CP]\d+', code)
-                        and '..' not in code):
-                    tickers.append(code)
-            if tickers:
-                return tickers
-    except Exception:
-        pass
-    return _DEFAULT_WATCHLIST
-
-
-def _fetch_live_portfolio() -> tuple[dict[str, float], float, float, float, set[str]]:
-    """Pull live portfolio via the shared loader (src.data.portfolio_loader).
-    Kept here because scripts/oie_engine.py imports it. Returns
-    (stock_holdings, cash, buying_power, fund, existing_option_tickers).
-    Falls back to last-known cash if OpenD is unreachable."""
-    pf = fetch_portfolio()
-    if not pf.stocks and pf.funds.cash == 0 and pf.funds.fund == 0:
-        # OpenD unavailable — preserve historical fallback for graceful degradation
-        return {}, 817.0, 48638.89, 48500.0, set()
-    holdings = {t: pos['qty'] for t, pos in pf.stocks.items()}
-    return holdings, pf.funds.cash, pf.funds.buying_power, pf.funds.fund, pf.option_tickers
-
-
-@dataclass
-class TradeCandidate:
-    ticker: str
-    strategy: str              # COVERED_CALL | CASH_SECURED_PUT
-    score: float               # 1-10, lower = better
-    strike: float
-    expiry: str
-    dte: int
-    delta: float
-    bid: float
-    ask: float
-    premium: float             # premium per contract
-    annualized_roc_pct: float
-    iv: float
-    iv_rank: float
-    open_interest: int
-    capital_required: float
-    reason: str
 
 
 def main():
@@ -150,14 +70,14 @@ def main():
     candidates: list[TradeCandidate] = []
 
     # ── FETCH PORTFOLIO FIRST (separate connection, close before MoomooClient) ──
-    PORTFOLIO, CASH, BUYING_POWER, FUND, EXISTING_OPTIONS = _fetch_live_portfolio()
+    PORTFOLIO, CASH, BUYING_POWER, FUND, EXISTING_OPTIONS = fetch_live_portfolio()
 
     with MoomooClient() as moomoo:
         yf_client = YFinanceClient() if not args.no_external else None
 
         # ── LIVE WATCHLIST ──
         print("📋 Loading watchlist + portfolio...", end=' ')
-        WATCHLIST = _fetch_live_watchlist(moomoo)
+        WATCHLIST = fetch_live_watchlist(moomoo.ctx)
         print(f"{len(WATCHLIST)} tickers, {len(PORTFOLIO)} positions, ${CASH + FUND:,.0f} liquid")
         print()
 
@@ -260,7 +180,7 @@ def main():
             # ── OPTION CHAIN (with retry + yfinance fallback) ──
             dte_min = _cfg_val(lambda c: c.dte_screen_min)
             dte_max = _cfg_val(lambda c: c.dte_screen_max)
-            contracts = _fetch_option_chain_resilient(moomoo, ticker, dte_min=dte_min, dte_max=dte_max)
+            contracts = moomoo.get_option_snapshots_resilient(ticker, dte_min=dte_min, dte_max=dte_max)
             if not contracts:
                 continue
             ticker_candidate_count = 0  # track how many pass for this ticker
@@ -273,52 +193,25 @@ def main():
             gex_negative = _compute_chain_gex(contracts, snap.last_price) < -500000
 
             for c in contracts:
-                # ═══ VRP GATE ═══
-                vrp_ok = True
-                if c.implied_vol and snap.hv_30d and snap.hv_30d > 0:
-                    vrp_ok = c.implied_vol > snap.hv_30d * 0.8
-                # IV sanity: moomoo returns IV as % (e.g. 41.2 = 41.2%), reject >500%
-                iv_sane = c.implied_vol and 0 < c.implied_vol < 500
-
                 # ── CSP candidates ──
                 if not args.cc_only and c.option_type == 'PUT':
-                    if c.bid <= 0 or (c.open_interest or 0) < _cfg_val(lambda c: c.oi_min) or (c.volume or 0) < 10:
-                        continue
-                    # CSP delta check from config (regime-adjusted)
                     abs_d = abs(c.delta or 0)
-                    delta_range = _cfg_val(lambda c: c.delta_range('csp', regime))
-                    if abs_d < delta_range[0] or abs_d > delta_range[1]:
+                    total_nlv = sum(PORTFOLIO.get(t, 0) * snap.last_price
+                                    for t, snap2 in [(short, snap)]
+                                    if snap2.last_price) + CASH + FUND
+                    ok, reason = passes_all_gates(
+                        c, 'CSP', regime, snap,
+                        skip_concentration=args.force,
+                        skip_cash_buffer=args.force,
+                        net_liq=total_nlv, cash=CASH + FUND,
+                        buying_power=BUYING_POWER)
+                    if not ok:
                         continue
-                    if abs_d > 0.70:
-                        continue  # deep ITM, not premium selling
-                        continue
-                    if not iv_sane:
-                        continue  # IV sanity: skip absurd IV values
-                    if not vrp_ok:
-                        continue  # VRP gate: skip if IV too cheap
+                    # GEX gate (screener-specific)
                     if gex_negative:
-                        continue  # GEX gate: skip CSP in negative GEX regime
-                    roc = _csp_roc(c.bid, c.strike, c.dte)
-                    if roc < _cfg_val(lambda c: c.roc_min_csp):
                         continue
+                    roc = _csp_roc(c.bid, c.strike, c.dte)
                     capital = c.strike * 100
-
-                    # ── CONCENTRATION GATE ──
-                    if not args.force:
-                        total_nlv = sum(PORTFOLIO.get(t, 0) * snap.last_price
-                                        for t, snap2 in [(short, snap)]
-                                        if snap2.last_price) + CASH + FUND
-                        if capital > total_nlv * _cfg_val(lambda c: c.max_single_position_pct):
-                            continue
-
-                        # ── CASH BUFFER GATE ──
-                        liquid = CASH + FUND
-                        cash_pct = liquid / total_nlv if total_nlv > 0 else 0
-                        if cash_pct < 0.10:
-                            continue
-
-                        if capital > BUYING_POWER * 0.8:
-                            continue
 
                     adj_roc = roc * regime_mult
                     contract_score = ticker_score + _contract_penalty(c, abs_d, adj_roc)
@@ -341,20 +234,13 @@ def main():
 
                 # ── CC candidates ──
                 if not args.csp_only and c.option_type == 'CALL' and has_shares:
-                    if c.bid <= 0 or (c.open_interest or 0) < _cfg_val(lambda c: c.oi_min) or (c.volume or 0) < 10:
+                    ok, reason = passes_all_gates(
+                        c, 'CC', regime, snap,
+                        skip_concentration=True,
+                        skip_cash_buffer=True)
+                    if not ok:
                         continue
-                    # CC delta check from config (regime-adjusted)
-                    cc_delta_range = _cfg_val(lambda c: c.delta_range('cc', regime))
-                    if c.delta < cc_delta_range[0] or c.delta > cc_delta_range[1]:
-                        continue
-                    if not iv_sane:
-                        continue  # IV sanity
-                    if not vrp_ok:
-                        continue  # VRP gate
-                    cost_basis = snap.last_price
-                    roc = (c.bid / cost_basis) * (365.0 / c.dte) * 100 if cost_basis > 0 else 0
-                    if roc < _cfg_val(lambda c: c.roc_min_cc):
-                        continue
+                    roc = cc_roc(c.bid, snap.last_price, c.dte)
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)
                     ticker_candidate_count += 1
                     if contract_score <= 5:

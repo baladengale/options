@@ -13,6 +13,27 @@ The system is a **deterministic data-driven engine** that:
 4. Generates portfolio summaries with signals and action items
 5. Uses AI ONLY at runtime for sentiment narrative and macro reasoning (never for scoring math)
 
+## Architecture (2026-07-19)
+
+The codebase follows a strict layered architecture:
+
+```
+scripts/          ← THIN wrappers: argparse → fetch data → call src/ → display
+src/filters/      ← Shared contract gates: liquidity, delta, IV, VRP, RoC, concentration
+src/scoring/      ← Ticker scoring + contract penalty + holding decisions
+src/data/         ← Data access: moomoo, yfinance, portfolio, watchlist, guardrails
+src/risk/         ← Risk: overlap detection, exit framework
+src/analysis/     ← Sentiment, macro context, thesis evaluation
+config/rules.yaml ← Single source of truth for ALL thresholds, weights, limits
+```
+
+**Rules**:
+- **No script imports from another script.** `oie_engine.py` imports from `src/`, not from `scripts/screener.py`.
+- **No hardcoded thresholds.** Every gate, penalty, weight, and limit lives in `config/rules.yaml` → `src/config.py`.
+- **All contract filtering uses `src/filters/contract_filters.py`.** Single source of truth for OI, delta, IV sanity, VRP, RoC, concentration, and cash buffer gates.
+- **Shared dataclasses** in `src/data/models.py`: `StockSnapshot`, `OptionSnapshot`, `TradeCandidate`.
+- **Shared data functions** in `src/data/`: `fetch_live_portfolio()`, `fetch_live_watchlist()`, `get_option_snapshots_resilient()`.
+
 ## Response Protocol — ALWAYS Follow This Order
 
 **For ANY portfolio, trading, or position question, you MUST run the local engine first. Never give generic advice — always ground answers in the user's actual portfolio data, their config rules, and their GOAL.md actions.**
@@ -214,14 +235,24 @@ pytest tests/ --cov=src --cov-report=term --cov-fail-under=85
 ```
 
 Key test files and what they validate:
-- `tests/test_scoring.py` — composite scoring with exact expected values
-- `tests/test_constraints.py` — all 14 constraint gates
-- `tests/test_trend.py` — SMA/MACD/RSI/ADX formula correctness
-- `tests/test_sentiment.py` — sentiment score sub-components
-- `tests/test_db_sync.py` — DB sync, freshness, staleness rejection
-- `tests/test_signals.py` — signal generator decision matrix
-- `tests/test_risk.py` — collar check, coverage, assignment handling
+- `tests/test_screener_scoring.py` — ticker scoring + contract penalty with exact expected values
+- `tests/test_screener_score.py` — scoring engine integration tests
+- `tests/test_holding_score.py` — holding/option scoring with stop-loss decisions
+- `tests/test_trend.py` — SMA/MACD/RSI/ADX formula correctness + signal generator
+- `tests/test_oie_db.py` — OIE paper DB CRUD operations
+- `tests/test_oie_simulation.py` — OIE simulation + lifecycle tests
+- `tests/test_overlap.py` — Put/call overlap analysis
+- `tests/test_holdings_exit.py` — Exit framework: dead zone, backstop, circuit breaker
+- `tests/test_portfolio_loader.py` — Portfolio loader data fetching
+- `tests/test_portfolio_summary.py` — P&L/income/sector computation
 
-## Implementation Order
+## Architecture Principles (Code)
 
-Follow the phases in SPECS.md Section 16. Build analysis modules before execution modules. Every module must have tests before it's considered complete.
+- **Layered**: `src/` owns all logic; `scripts/` are thin orchestrators only
+- **No cross-script imports**: `oie_engine.py` imports from `src/`, never from `scripts/screener.py`
+- **Config-driven**: every threshold in `config/rules.yaml` → `src/config.py`. No hardcoded values in scripts.
+- **Shared filters**: `src/filters/contract_filters.py` is the single source of truth for all contract gates
+- **Shared models**: `src/data/models.py` — `StockSnapshot`, `OptionSnapshot`, `TradeCandidate`
+- **Shared data**: `src/data/` — `fetch_live_portfolio()`, `fetch_live_watchlist()`, `get_option_snapshots_resilient()`
+- **Paper-trade before live**: every strategy change runs against historical data before touching real money
+- **Freshness-first**: sync from moomoo before every analysis run. Never proceed with stale data

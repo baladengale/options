@@ -271,6 +271,17 @@ def fetch_portfolio(host: str = '127.0.0.1', port: int = 11111) -> Portfolio:
         return Portfolio()
 
 
+def fetch_live_portfolio(host: str = '127.0.0.1', port: int = 11111):
+    """Convenience: fetch portfolio as tuple for screener/OIE engine compatibility.
+    Returns (holdings_dict, cash, buying_power, fund, option_tickers).
+    Falls back to safe defaults if OpenD is unreachable."""
+    pf = fetch_portfolio(host, port)
+    if not pf.stocks and pf.funds.cash == 0 and pf.funds.fund == 0:
+        return {}, 817.0, 48638.89, 48500.0, set()
+    holdings = {t: pos['qty'] for t, pos in pf.stocks.items()}
+    return holdings, pf.funds.cash, pf.funds.buying_power, pf.funds.fund, pf.option_tickers
+
+
 def fetch_portfolio_and_orders(
     host: str = '127.0.0.1', port: int = 11111, start: str = '2024-01-01',
 ) -> tuple[Portfolio, list[dict]]:
