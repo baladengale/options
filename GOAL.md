@@ -96,3 +96,8 @@ Before any new trade, verify ALL of these:
 - [ ] OI ≥ 500, volume ≥ 10
 - [ ] RoC ≥ 12% (CSP) or ≥ 8% (CC)
 - [ ] Would I be happy owning this stock for 1 year if assigned?
+- [ ] ALWAYS consider my Cash + Stock values > 70% of my CSP liability
+ 
+### 9. My reasoning behind few posistons - Do consider this while recommendation
+- [] Goal is to sell Visa stock and diversify into other good fundamental equities which can give good premium earning options
+- [] Goal is to aquired AMD and AVGO stocks as those are fundamental in Semiconductor industry for AI
