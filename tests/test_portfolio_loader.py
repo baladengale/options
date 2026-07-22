@@ -135,10 +135,10 @@ def test_fetch_funds_skips_simulate_account():
 
 def test_fetch_positions_stocks_and_options():
     trd = FakeTrd(positions=[
-        _pos('US.V', 430, cost=270.0, nominal=348.0, pl_val=33540, pl_ratio=0.287),
-        _pos('US.AVGO260731P350000', -1, cost=11.2, pl_val=705, pl_ratio=0.629),
-        _pos('US.V260821C380000', -1, cost=5.15, pl_val=255.5, pl_ratio=0.496),
-        _pos('US.GOOG260717P335000', -1, cost=1.22, pl_val=-33, pl_ratio=-0.27),
+        _pos('US.V', 430, cost=270.0, nominal=348.0, pl_val=33540, pl_ratio=28.7),
+        _pos('US.AVGO260731P350000', -1, cost=11.2, pl_val=705, pl_ratio=62.9),
+        _pos('US.V260821C380000', -1, cost=5.15, pl_val=255.5, pl_ratio=49.6),
+        _pos('US.GOOG260717P335000', -1, cost=1.22, pl_val=-33, pl_ratio=-27.0),
         _pos('US.MSFT', 0),             # zero-qty → skipped
         _pos('US..BAD260717P335000', -1),  # double-dot → skipped
     ])

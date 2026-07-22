@@ -188,7 +188,7 @@ def fetch_positions(trd) -> tuple[dict, dict]:
                     'qty': qty,
                     'cost': float(p.get('cost_price', 0) or 0),
                     'pl': float(p.get('pl_val', 0) or 0),
-                    'pl_pct': float(p.get('pl_ratio', 0) or 0) * 100,
+                    'pl_pct': float(p.get('pl_ratio', 0) or 0),
                     'delta': 0.0,   # filled later from quote snapshot
                     'dte': 0,
                 }
@@ -202,7 +202,7 @@ def fetch_positions(trd) -> tuple[dict, dict]:
                     'price': price,
                     'mv': qty * price,
                     'pl': float(p.get('pl_val', 0) or 0),
-                    'pl_pct': float(p.get('pl_ratio', 0) or 0) * 100,
+                    'pl_pct': float(p.get('pl_ratio', 0) or 0),
                 }
         # First REAL account only
         break
