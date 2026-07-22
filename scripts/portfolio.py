@@ -10,6 +10,8 @@ Usage:
     python3 scripts/portfolio.py --health    # decisions + overlap + guardrails
     python3 scripts/portfolio.py --funds     # account funds only
     python3 scripts/portfolio.py --pnl       # positions + P&L + income
+    python3 scripts/portfolio.py --orders    # order history for current positions
+    python3 scripts/portfolio.py --orders AMD  # order history for specific ticker
     python3 scripts/portfolio.py --no-external   # skip yfinance (offline)
 """
 import argparse
@@ -50,9 +52,10 @@ def _resolve_sections(args) -> set:
     if args.fast:
         return {'funds', 'pnl'}
     s = set()
-    if args.funds:  s.add('funds')
-    if args.pnl:    s.add('pnl')
-    if args.health: s.add('health')
+    if args.funds:   s.add('funds')
+    if args.pnl:     s.add('pnl')
+    if args.health:  s.add('health')
+    if args.orders:  s.add('orders')
     return s or {'funds', 'pnl', 'health'}
 
 
@@ -62,6 +65,7 @@ def main():
     parser.add_argument('--health', action='store_true', help='Decisions + overlap + guardrails')
     parser.add_argument('--funds', action='store_true', help='Account funds only')
     parser.add_argument('--pnl', action='store_true', help='Positions + P&L + income')
+    parser.add_argument('--orders', nargs='?', const='ALL', help='Order history (optional: filter by ticker)')
     parser.add_argument('--no-external', action='store_true', help='Skip yfinance (offline)')
     args = parser.parse_args()
 
@@ -99,6 +103,10 @@ def main():
     # ── P&L (positions + income + sectors) ──
     if 'pnl' in sections:
         _print_pnl(pf, orders, nlv, today)
+
+    # ── ORDERS (order history) ──
+    if 'orders' in sections:
+        _print_orders(args.orders, pf)
 
     # ── HEALTH (decisions + overlap + guardrails) ──
     if 'health' in sections:
@@ -207,6 +215,148 @@ def _print_pnl(pf, orders, nlv, today):
             pct = (sectors[sec] / nlv * 100) if nlv > 0 else 0
             bar = '█' * int(pct / 2)
             print(f"  {sec:<20s} ${sectors[sec]:>13,.0f}  {pct:>5.1f}%  {bar}")
+    print()
+
+
+# ════════════════════════════════════════════════════════════════
+# ORDERS  (order history)
+# ════════════════════════════════════════════════════════════════
+
+def _print_orders(ticker_filter, pf):
+    """Fetch and display order history from moomoo."""
+    from moomoo import OpenSecTradeContext, TrdEnv
+    from datetime import datetime, timedelta
+    import re
+
+    def parse_option_code(code):
+        """Parse option code into readable format."""
+        parts = re.match(r"US\.(\w+?)(\d{2})(\d{2})(\d{2})([CP])(\d+)", code)
+        if parts:
+            ticker, yr, mo, dy, opt_type, strike_val = parts.groups()
+            expiry = f"20{yr}-{mo}-{dy}"
+            strike = float(strike_val) / 1000
+            return ticker, expiry, opt_type, strike
+        return None, None, None, None
+
+    print(f"{'='*90}")
+    print(f"  📋 ORDER HISTORY")
+    print(f"{'='*90}")
+
+    if ticker_filter != 'ALL':
+        print(f"  🔍 Filtering by ticker: {ticker_filter}")
+        print()
+
+    try:
+        trd = OpenSecTradeContext(host='127.0.0.1', port=11111, ai_type=1)
+
+        # Get account list
+        ret, acc_list = trd.get_acc_list()
+
+        if ret != RET_OK:
+            print("  ❌ Failed to connect to moomoo")
+            trd.close()
+            return
+
+        for _, acc in acc_list.iterrows():
+            if str(acc.get('trd_env', '')) == 'SIMULATE':
+                continue
+
+            acc_id = acc['acc_id']
+
+            # Calculate date range for last 90 days
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=90)
+
+            ret1, hist = trd.history_order_list_query(
+                trd_env=TrdEnv.REAL, acc_id=acc_id,
+                start=start_date.strftime('%Y-%m-%d'),
+                end=end_date.strftime('%Y-%m-%d')
+            )
+
+            if ret1 == RET_OK and hist is not None:
+                # Filter orders based on ticker_filter
+                if ticker_filter == 'ALL':
+                    # Show all option orders
+                    filtered_orders = hist[hist['code'].str.contains(r'\d{6}[CP]\d+', na=False)]
+                    print(f"  Showing all option orders (last 90 days, filled only)")
+                else:
+                    # Filter by specific ticker
+                    filtered_orders = hist[hist['code'].str.contains(ticker_filter, na=False)]
+                    print(f"  Showing {ticker_filter} option orders (last 90 days, filled only)")
+
+                # Skip cancelled orders
+                filtered_orders = filtered_orders[~filtered_orders['order_status'].str.contains('CANCELLED', na=False)]
+
+                if len(filtered_orders) == 0:
+                    print(f"  ⚠️  No filled orders found for '{ticker_filter}'")
+                else:
+                    print(f"  Found {len(filtered_orders)} filled orders:")
+                    print()
+
+                    # Sort by create time (newest first)
+                    filtered_orders = filtered_orders.sort_values('create_time', ascending=False)
+
+                    print(f"  {'Time':<20s} {'Action':<15s} {'Details':<35s} {'Qty':>6s} {'Price':>10s} {'Total $':>12s}")
+                    print(f"  {'-'*20} {'-'*15} {'-'*35} {'-'*6} {'-'*10} {'-'*12}")
+
+                    total_premium_received = 0
+                    total_premium_paid = 0
+                    total_trades = 0
+
+                    for idx, order in filtered_orders.iterrows():
+                        code = str(order.get('code', ''))
+                        create_time = str(order.get('create_time', ''))[:19]
+                        side = str(order.get('trd_side', ''))
+                        qty = float(order.get('qty', 0) or 0)
+                        price = float(order.get('dealt_avg_price', 0) or order.get('price', 0) or 0)
+
+                        # Parse option code
+                        ticker, expiry, opt_type, strike = parse_option_code(code)
+
+                        # Calculate total transaction amount
+                        total_amount = abs(qty) * price * 100  # Options are 100 shares per contract
+
+                        # Format action description
+                        if side in ('SELL', 'SELL_SHORT'):
+                            action = "💰 SOLD"
+                            total_premium_received += total_amount
+                            if opt_type == 'P':
+                                details = f"{ticker} PUT ${strike:.0f} {expiry}"
+                            else:
+                                details = f"{ticker} CALL ${strike:.0f} {expiry}"
+                        elif side in ('BUY', 'BUY_BACK'):
+                            action = "🔴 BOUGHT"
+                            total_premium_paid += total_amount
+                            if opt_type == 'P':
+                                details = f"{ticker} PUT ${strike:.0f} {expiry}"
+                            else:
+                                details = f"{ticker} CALL ${strike:.0f} {expiry}"
+                        else:
+                            action = f"❓ {side}"
+                            details = code
+
+                        total_trades += 1
+                        print(f"  {create_time:<20s} {action:<15s} {details:<35s} {abs(qty):>6.0f} ${price:>9.2f} ${total_amount:>11,.2f}")
+
+                    print()
+                    print(f"  💰 TOTALS (Last 90 Days):")
+                    print(f"     Premium Received:  ${total_premium_received:>12,.2f}")
+                    print(f"     Premium Paid:      ${total_premium_paid:>12,.2f}")
+                    print(f"     Net Income:        ${total_premium_received - total_premium_paid:>12,.2f}")
+                    print(f"     Total Trades:      {total_trades:>12}")
+
+            break  # First REAL account only
+
+        trd.close()
+
+        print()
+        print("  💡 Usage: --orders AMD (filter by ticker) | --orders (show all)")
+
+    except Exception as e:
+        print(f"  ❌ Error fetching order history: {e}")
+        import traceback
+        traceback.print_exc()
+
     print()
 
 
