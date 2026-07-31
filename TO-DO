@@ -1,12 +1,10 @@
-Show proper P&L with script ✅ (scripts/portfolio.py — consolidated)
 
-alias portfolio="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/portfolio.py"
-alias oie="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/oie_engine.py"
-alias screener="source /Users/bala/workspace/options/.venv/bin/activate && python3 /Users/bala/workspace/options/scripts/screener.py"
-
-# portfolio.py flags:
-#   portfolio --fast     → funds + P&L only
-#   portfolio --health   → decisions + overlap + guardrails
-#   portfolio --funds    → account funds only
-#   portfolio --pnl      → positions + P&L + income
-#   portfolio --no-external → skip yfinance (offline)
+## Goals:
+1. Overall idea is to make this framework automatic so we execute but it screen through portfolio and watchlist for current posistions and available opportunities and provide signals to take decision. At the end those decisions are executed in paper trade with oie framework but human in the loop will review and execute those after through analysis. So when decision is provided for execution, better explain with thesis and reasoning behind it.
+2. Goals is to go for above average return not too high by risking Capital, Research still favors for buy and hold investores than very regular traders...But This framework and overall experince we will go through and experience it. 
+3. Overall thinking and execution should not take more than 15 minutes per day during active market days.
+4. Capital preservation is the most important aspect of trading or this framework when it provides signals for action
+5. Overall we will start with Wheel strategies but learn and understand different strategies can be applied during different time in the market
+6. Avoid temptation or decisions without any thesis, Avoid Grid to earn more premium.. Its important to preserve capital.
+7. Loss management or decision to close the posistion when market goes against your bet is the most important and thought through as markets often volatile and too quick decision as well often not correct.
+8. 

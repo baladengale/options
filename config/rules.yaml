@@ -221,3 +221,74 @@ watchlist:
     consumer:     [US.KO, US.WMT, US.PG]
     energy:       [US.XOM, US.CVX]
     industrial:   [US.CAT, US.GE, US.HON]
+
+# ── Thesis Validation ──
+# Systematic thesis checks to prevent trading drift.
+# Runs weekly (Monday 9AM) on all positions.
+thesis_validation:
+  enabled: true
+  check_frequency: weekly  # monday 9am
+
+  # Earnings estimate revision thresholds (percent)
+  earnings_revision_threshold: -20   # CRITICAL if cuts >20%
+  revenue_guidance_threshold: -15    # CRITICAL if guidance cut >15%
+
+  # Fundamental health minimums
+  fundamental_score_minimum: 3       # 1-10 scale, below = CRITICAL
+
+  # Technical damage thresholds (percent below 200 SMA)
+  price_vs_200sma_threshold: -15     # WARNING if >15% below
+  price_vs_200sma_critical: -25      # CRITICAL if >25% below
+
+  # Volatility regime check
+  volatility_elevated_threshold: 100  # HV percent, above = WARNING
+
+  # Price performance thresholds (percent off 52-week high)
+  price_perf_warning: -25            # WARNING if >25% off highs
+  price_perf_critical: -40           # CRITICAL if >40% off highs
+
+# ── Automatic Exit Conditions ──
+# When these fire, the position should be closed (not rolled).
+auto_exit_triggers:
+  thesis_broken: true                # auto-exit if thesis validation returns BROKEN
+  concentration_exceeded: true       # block new, let existing expire
+  earnings_imminent: true            # close before earnings if DTE spans earnings
+
+  earnings_lookahead_days: 14        # blackout window before earnings
+  auto_close_before_earnings: true   # auto-close options spanning earnings
+
+# ── Systematic Timeline ──
+# Enforces weekly/monthly reviews, eliminates daily decisions.
+schedule:
+  daily_status: "09:00"              # status check only, no decisions
+  weekly_thesis: "Monday 09:00"      # thesis validation + auto-exit if broken
+  monthly_guardrail: "01 09:00"      # guardrail review (1st of month)
+  expiry_processing: "Friday 16:00"  # process expirations, handle assignments
+
+# ── Guardrail Operational Limits ──
+# Operational limits for the guardrails module (src/guardrails/limits.py).
+# Separate from position_limits above which governs risk/capital constraints.
+guardrail_limits:
+  max_position_pct_emergency: 0.15   # emergency: reduce concentration
+  max_sector_pct_emergency: 0.40     # emergency: accept temporary concentration
+  max_position_pct_target: 0.25      # target: reasonable for quality stocks
+  max_sector_pct_target: 0.35        # target: allows natural concentration
+  max_position_pct_quality: 0.30     # comfort: for exceptional quality (V, AAPL)
+
+  # CSP deployment limits (cash-buffer based)
+  max_csp_liability_critical: 0.15   # ≤10% cash buffer
+  max_csp_liability_warning: 0.25    # ≤15% cash buffer
+  max_csp_liability_target: 0.35     # ≤20% cash buffer
+  max_csp_liability_comfort: 0.50    # ≥30% cash buffer
+
+  # Cash buffer thresholds
+  cash_buffer_critical: 0.10         # below = emergency
+  cash_buffer_warning: 0.15          # below = minimum acceptable
+  cash_buffer_target: 0.20           # good buffer
+  cash_buffer_comfort: 0.30          # strong buffer
+
+  # Complexity limits
+  max_total_positions_emergency: 10  # emergency: accept current level
+  max_total_positions_target: 8      # target: manageable
+  max_monthly_orders_emergency: 20   # emergency: progress from 40
+  max_monthly_orders_target: 10      # target: true Wheel frequency

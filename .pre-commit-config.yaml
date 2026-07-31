@@ -1,0 +1,85 @@
+# Pre-commit hooks for options trading framework
+# Run these hooks automatically before each commit
+
+repos:
+  - repo: local
+    hooks:
+      # Python code quality
+      - id: check-code-style
+        name: Check code style with flake8
+        entry: flake8 src/ tests/ --max-line-length=100 --exclude=__pycache__
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Import sorting
+      - id: sort-imports
+        name: Sort imports with isort
+        entry: isort src/ tests/ --profile black
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Security scanning
+      - id: security-scan
+        name: Security scan with bandit
+        entry: bandit -r src/ -ll -i
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Type checking
+      - id: type-check
+        name: Type check with mypy
+        entry: mypy src/ --ignore-missing-imports
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Critical unit tests
+      - id: critical-unit-tests
+        name: Run critical unit tests
+        entry: pytest tests/test_constraints.py tests/test_trend.py -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Thesis validation tests
+      - id: thesis-validation-tests
+        name: Run thesis validation tests
+        entry: pytest tests/test_thesis_validation.py -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Configuration validation
+      - id: config-validation
+        name: Validate configuration files
+        entry: pytest tests/infrastructure/test_configuration.py -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  # Standard Python hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: name-tests-test
+        args: ['--django']
+      - id: requirements-txt-fixer
+  - repo: https://github.com/psf/black
+    rev: 23.7.0
+    hooks:
+      - id: black
+        language_version: python3.14
+        args: ['--line-length=100']

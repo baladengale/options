@@ -115,3 +115,93 @@ def stock_market_value(stocks: dict) -> float:
         (pos.get('mv', 0) if isinstance(pos, dict) else 0)
         for pos in stocks.values()
     )
+
+
+# ── Thesis-Aware Decision Messages ──────────────────────────────────
+# These functions replace trading-encouraging messages ("close or roll",
+# "evaluate exit") with monitoring-focused, thesis-aware language.
+# They delegate to src.analysis.thesis_validator for actual thesis checks.
+
+
+def check_thesis_quick(ticker: str) -> dict:
+    """
+    Quick thesis check for decision messages (non-blocking).
+
+    Wraps src.analysis.thesis_validator.quick_thesis_check() with a
+    fallback-friendly interface. Returns a simple dict with boolean flags
+    suitable for use in portfolio display logic.
+
+    Returns:
+        dict with 'broken' and 'damaged' boolean flags
+    """
+    try:
+        from src.analysis.thesis_validator import quick_thesis_check
+        from src.data.moomoo_client import MoomooClient
+
+        moomoo = MoomooClient()
+        snapshot = moomoo.get_stock_snapshot(f"US.{ticker}")
+        if snapshot:
+            result = quick_thesis_check(ticker, snapshot)
+            return {'broken': result['broken'], 'damaged': result['damaged']}
+    except Exception:
+        pass
+
+    # Default to intact if data unavailable
+    return {'broken': False, 'damaged': False}
+
+
+def generate_option_decision_message(position: dict) -> str:
+    """
+    Generate Wheel-appropriate decision messages for a single option position.
+
+    Replaces the old trading-encouraging messages ("close or roll", "evaluate
+    exit") with thesis-aware, monitoring-focused language. Assignment is
+    framed as an expected Wheel outcome, not a warning.
+
+    Args:
+        position: dict with keys:
+            days_to_expiry (dte), delta, unrealized_pnl, option_type, ticker
+
+    Returns:
+        Human-readable decision message string
+    """
+    dte = position.get('days_to_expiry', 0)
+    delta = abs(position.get('delta', 0))
+    unrealized_pnl = position.get('unrealized_pnl', 0)
+    option_type = position.get('option_type', 'PUT')
+    ticker = position.get('ticker', '')
+
+    # Thesis-aware check
+    thesis_check = check_thesis_quick(ticker) if ticker else {'broken': False, 'damaged': False}
+
+    # Expiring Soon (≤3 DTE)
+    if dte <= 3:
+        if thesis_check['broken']:
+            return "🚨 THESIS BROKEN — Auto-close required"
+        return "📅 Expiring Soon — Let expire/assign naturally"
+
+    # High Assignment Probability (|delta| ≥ 0.50)
+    if delta >= 0.50:
+        if option_type == 'CALL':
+            return "📈 High Assignment Probability — Expected CC outcome"
+        else:
+            return "📈 High Assignment Probability — Expected CSP outcome"
+
+    # Underwater Positions
+    if unrealized_pnl < 0:
+        if thesis_check['broken']:
+            return "🚨 THESIS BROKEN — Exit Wheel position"
+        elif thesis_check['damaged']:
+            return "⚠️  THESIS DAMAGED — Monitor, no action needed"
+        else:
+            return "📊 Position Down — Thesis intact, hold position"
+
+    # Standard Monitoring (7-21 DTE)
+    if 7 <= dte <= 21:
+        return "📋 Position On Track — Weekly monitoring scheduled"
+
+    # Long-Term (> 21 DTE)
+    if dte > 21:
+        return "📊 Long-Term Position — Monthly review scheduled"
+
+    return "✅ Position Status — No action required"

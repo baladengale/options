@@ -69,10 +69,12 @@ def test_option_near_dte_15x_stop_gamma():
 
 
 def test_option_heavy_loss_catchall():
-    # pl < -1000 with no stronger trigger → UNDERWATER evaluate exit
+    # pl < -1000 with no stronger trigger → thesis-aware message (or UNDERWATER fallback)
     s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-5.0,
                            pl=-1500, today=TODAY, yf_client=None)
-    assert 'UNDERWATER' in dec
+    # When MoomooClient is available: thesis-aware path ("Position Down — Thesis intact")
+    # When unavailable: fallback ("UNDERWATER — Monitor thesis, not price")
+    assert 'UNDERWATER' in dec or 'Position Down' in dec or 'Thesis' in dec
 
 
 def test_option_normal_hold():
@@ -80,7 +82,7 @@ def test_option_normal_hold():
     s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=10.0,
                            pl=100, today=TODAY, yf_client=None)
     assert 1.0 <= s <= 10.0
-    assert 'HOLD' in dec or 'monitor' in dec.lower() or 'captured' in dec.lower() or '21 DTE' in dec
+    assert 'HOLD' in dec or 'monitor' in dec.lower() or 'captured' in dec.lower() or 'Management Point' in dec
 
 
 def test_option_score_always_in_range():

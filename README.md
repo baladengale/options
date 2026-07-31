@@ -69,6 +69,7 @@ python3 scripts/market_sentiment.py
 │                    DATA LAYER (src/data/)                    │
 │  moomoo_client  │  yfinance_client  │  portfolio_loader     │
 │  watchlist      │  models           │  guardrails           │
+│  do_not_wheel_list                                              │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
@@ -81,6 +82,25 @@ python3 scripts/market_sentiment.py
 │                 SCORING LAYER (src/scoring/)                 │
 │  screener_score — ticker scoring + contract penalty         │
 │  holding_score — position scoring + CC hunting              │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│               ANALYSIS LAYER (src/analysis/)                 │
+│  thesis_validator — investment thesis checks + auto-exit    │
+│  sentiment — macro context + ticker sentiment               │
+│  adaptive_profit — profit target with 21 DTE floor          │
+│  roll_first — roll-before-close optimization                │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│               GUARDRAILS LAYER (src/guardrails/)             │
+│  limits — staged position/CSP/sector limits (emerg→target)  │
+│  + src/data/guardrails.py — live portfolio guardrails       │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                SYSTEM LAYER (src/system/)                    │
+│  scheduler — systematic timeline (daily/weekly/monthly)     │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
@@ -97,6 +117,7 @@ python3 scripts/market_sentiment.py
 - **Config-driven**: every threshold, weight, and limit in `config/rules.yaml`. No hardcoded values.
 - **Read-only**: scripts poll moomoo, analyze, and simulate. Never submit orders.
 - **One DB**: `db/oie_paper.db` for paper trading only. Real portfolio is live from moomoo.
+- **Thesis-aware**: every position decision is validated against the original investment thesis. No emotional trading.
 
 ---
 
@@ -107,9 +128,10 @@ options/
 ├── db/
 │   └── oie_paper.db                   # Paper trading portfolio (4 tables)
 ├── config/
-│   └── rules.yaml                     # Master config: ALL parameters, thresholds, limits
+│   ├── rules.yaml                     # Master config: ALL parameters, thresholds, limits
+│   └── do_not_wheel.yaml              # Persistent exclusion list (6-month auto-expire)
 ├── src/                               # ← ALL business logic lives here
-│   ├── filters/                       # NEW — shared contract gates (single source of truth)
+│   ├── filters/                       # Shared contract gates (single source of truth)
 │   │   └── contract_filters.py        #   Liquidity, delta, IV, VRP, RoC, concentration gates
 │   ├── data/
 │   │   ├── portfolio_loader.py        # Shared: fetch_portfolio, fetch_live_portfolio
@@ -119,28 +141,37 @@ options/
 │   │   ├── yfinance_client.py         # Yahoo Finance: analyst, earnings, news, macro, regime
 │   │   ├── compute.py                 # Deterministic indicators (RSI, MACD, ADX, HV)
 │   │   ├── oie_db.py                  # OIE paper portfolio DB
+│   │   ├── do_not_wheel_list.py       # Do-Not-Wheel list manager (thesis-broken exclusions)
 │   │   └── guardrails.py              # Portfolio size/risk limits (shared)
 │   ├── scoring/
 │   │   ├── screener_score.py          # Ticker scoring + contract penalty (shared)
-│   │   └── holding_score.py           # Position scoring + CC hunting
+│   │   └── holding_score.py           # Position scoring + CC hunting (thesis-aware messages)
+│   ├── analysis/
+│   │   ├── thesis_validator.py        # Investment thesis checks: PE, SMA, HV, earnings, price perf
+│   │   ├── adaptive_profit.py         # Profit target management with 21 DTE hard floor
+│   │   ├── roll_first.py              # Roll-before-close optimization for tested positions
+│   │   ├── sentiment.py               # Shared: macro context + ticker sentiment
+│   │   └── thesis.py                  # Investment thesis evaluation (quarterly fundamentals)
+│   ├── guardrails/
+│   │   └── limits.py                  # Staged position limits (emergency → target → comfort)
+│   ├── system/
+│   │   └── scheduler.py               # Systematic timeline (daily/weekly/monthly reviews)
 │   ├── risk/
 │   │   ├── overlap.py                 # Put/call overlap analysis
 │   │   ├── holdings_exit.py           # Exit framework: dead zone, backstop, circuit breaker
 │   │   └── monitor.py                 # Real-time risk monitoring
 │   ├── portfolio/
-│   │   └── summary.py                 # P&L, income, monthly, sector breakdown
-│   ├── analysis/
-│   │   ├── sentiment.py               # Shared: macro context + ticker sentiment
-│   │   └── thesis.py                  # Investment thesis evaluation
+│   │   └── summary.py                 # P&L, income, monthly, sector breakdown + decision messages
 │   ├── config.py                      # Typed config loader from rules.yaml
 │   └── logging_setup.py               # Shared logging → logs/options.log
 ├── scripts/                           # ← THIN wrappers: argparse → src/ → display
-│   ├── portfolio.py                   # Consolidated: state + P&L + health
+│   ├── portfolio.py                   # Full sweep: state + P&L + health + thesis + timeline + recs
 │   ├── screener.py                    # Watchlist screener: CC + CSP candidates
 │   ├── oie_engine.py                  # OIE: paper trading engine (init/run/once/status)
 │   ├── market_data.py                 # Adhoc: single ticker deep dive
 │   └── market_sentiment.py            # Adhoc: macro + analyst + earnings + news
 ├── tests/
+│   ├── test_thesis_validation.py      # Thesis validation + guardrails + decision messages (52 tests)
 │   ├── test_oie_db.py                 # OIE paper DB tests
 │   ├── test_oie_simulation.py         # OIE simulation + lifecycle tests
 │   ├── test_screener_scoring.py       # Screener scoring tests
@@ -149,8 +180,8 @@ options/
 │   ├── test_portfolio_loader.py       # Portfolio loader tests
 │   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
 │   ├── test_holdings_exit.py          # Exit framework tests
-│   └── ...                            # 418 tests total
-├── specs/                             # Research + architecture docs
+│   └── ...                            # 470 tests total (468 pass, 2 moomoo-dependent)
+├── docs/                              # Research docs + implementation guides
 ├── .claude/skills/                    # Claude Code skills (oie, oie-paper)
 ├── CLAUDE.md                          # AI coding instructions
 ├── GOAL.md                            # Investment goals
@@ -245,11 +276,88 @@ source .venv/bin/activate && python3 scripts/portfolio.py --no-external   # Skip
 | Module | Provides |
 |--------|---------|
 | `src/data/portfolio_loader.py` | `fetch_portfolio_and_orders()` — single connection, all moomoo data |
-| `src/portfolio/summary.py` | `compute_income()`, `compute_sector_breakdown()`, P&L roll-ups |
-| `src/scoring/holding_score.py` | `_score_holding()`, `_score_option()`, `_find_best_cc()` |
+| `src/portfolio/summary.py` | `compute_income()`, `compute_sector_breakdown()`, P&L roll-ups, `generate_option_decision_message()` |
+| `src/scoring/holding_score.py` | `_score_holding()`, `_score_option()`, `_find_best_cc()` — thesis-aware decision messages |
 | `src/risk/overlap.py` | `analyze_overlap()` — straddle/strangle/stacked-call detection |
 | `src/risk/holdings_exit.py` | `evaluate_holding_exit()` — dead zone, backstop, circuit breaker |
-| `src/analysis/thesis.py` | `evaluate_thesis()` — investment thesis gate for dead-zone holdings |
+| `src/analysis/thesis_validator.py` | `validate_investment_thesis()`, `quick_thesis_check()` — PE, SMA, HV, earnings, price checks |
+| `src/analysis/thesis.py` | `evaluate_thesis()` — quarterly fundamental thesis gate for dead-zone holdings |
+| `src/guardrails/limits.py` | `GuardrailChecker` — staged position limits (emergency → target → comfort) |
+| `src/data/guardrails.py` | `GuardrailChecker` — live portfolio: concentration, sector, CSP, cash buffer, stress test |
+
+---
+
+---
+
+### `portfolio.py` — Full Portfolio Sweep (umbrella command)
+
+Bare run is a full sweep: funds → P&L → health+guardrails (incl. staged recovery view) → systematic timeline → do-not-wheel list → thesis validation on every holding → data-driven recommendations. This absorbs the former `comprehensive_analysis.py`.
+
+```bash
+python3 scripts/portfolio.py             # full sweep (all sections)
+python3 scripts/portfolio.py --thesis    # thesis validation only
+python3 scripts/portfolio.py --schedule  # systematic timeline only
+python3 scripts/portfolio.py --health    # decisions + overlap + guardrails only
+python3 scripts/portfolio.py --fast      # funds + P&L only (no scoring/thesis)
+python3 scripts/portfolio.py --no-external   # skip yfinance (skips thesis deep-checks)
+```
+
+---
+
+## Thesis Validation Framework
+
+Every position is validated against its original investment thesis. The framework checks 5 dimensions and returns one of three states:
+
+| State | Meaning | Action |
+|-------|---------|--------|
+| **THESIS INTACT** | All checks pass | Continue Wheel — hold, let assignment occur naturally |
+| **TECHNICAL DAMAGE** | Warning signs present | Weekly monitoring — re-evaluate in 7 days |
+| **THESIS BROKEN** | Critical failure | Exit position — add to Do-Not-Wheel list for 6 months |
+
+**Checks performed** (in `src/analysis/thesis_validator.py`):
+
+| Check | CRITICAL (BROKEN) | WARNING (DAMAGED) |
+|-------|:---:|:---:|
+| Earnings trend | Analyst downgrades >20% | Downgrades >10% |
+| Fundamental health | P/E negative or >100 | P/E >50 |
+| Technical damage | Price >25% below 200 SMA | Price >15% below 200 SMA |
+| Volatility regime | — | HV >100% |
+| Price performance | >40% off 52-week high | >25% off 52-week high |
+
+**Config**: `config/rules.yaml` → `thesis_validation:` section. All thresholds configurable.
+
+---
+
+## Systematic Timeline
+
+The scheduler (`src/system/scheduler.py`) enforces a review cadence that eliminates daily decision-making:
+
+| Review | When | Actions |
+|--------|------|---------|
+| **Daily Status** | Every day 9AM | Position status check only — NO trading decisions |
+| **Weekly Thesis** | Monday 9AM | Validate thesis for all positions. Auto-exit if broken. |
+| **Expiry Processing** | Friday 4PM | Process expirations and assignments only. No early closes. |
+| **Monthly Guardrail** | 1st of month 9AM | Check concentrations, CSP deployment, cash buffer, position count |
+
+Only the weekly thesis review allows automated exit decisions. All other times are read-only monitoring.
+
+**Config**: `config/rules.yaml` → `schedule:` and `auto_exit_triggers:` sections.
+
+---
+
+## Do-Not-Wheel List
+
+Stocks with broken theses are added to a persistent exclusion list (`config/do_not_wheel.yaml`) for 6 months. The screener automatically skips excluded tickers.
+
+```python
+from src.data.do_not_wheel_list import DoNotWheelList
+
+dnl = DoNotWheelList()
+dnl.add('BE', months=6, reason='P/E -456 — fundamentals broken')
+dnl.is_excluded('BE')  # → True for 6 months, then auto-expires
+```
+
+Integrated into `scripts/screener.py` as a pre-filter before scoring. Stocks on the list are skipped with a log message showing the reason and expiration date.
 
 ---
 
@@ -697,7 +805,7 @@ Both `screener.py` and `portfolio.py --health` use the same 1-10 scale via `src/
 
 ### How `portfolio.py --health` Scores Existing Positions
 
-Starts at **5.0 (neutral)**, then adjusts:
+Starts at **5.0 (neutral)**, then adjusts. **Messages are thesis-aware** — assignment is framed as an expected outcome, underwater positions reference thesis health rather than urging action:
 
 ```
 Score starts at 5.0
@@ -705,10 +813,12 @@ Score starts at 5.0
   -1.5  if profit ≥ 50%       → 3.5   CLOSE — industry standard exit
   -0.5  if profit ≥ 30%       → 4.5   HOLD — good progress
   +1.0  if DTE ≤ 7            → 6.0   near expiry gamma risk
-  +1.0  if underwater         → 6.0+  losing position
-  +1.5  if ITM (Δ > 0.50)     → 6.5+  assignment likely
+  +1.0  if underwater         → 6.0+  "Position Underwater — Monitor thesis, not price"
+  +1.5  if ITM (Δ > 0.50)     → 6.5+  "High Assignment Probability — Expected outcome"
   +1.0  if earnings in DTE    → 6.0+  binary event risk
 ```
+
+**Thesis-aware fallback**: positions with pl < -$1000 check thesis health before deciding. If thesis is intact → "Position Down — Thesis intact, hold position". If thesis is broken → "THESIS BROKEN — Exit Wheel position". This eliminates the old "UNDERWATER — evaluate exit" urgency that encouraged emotional trading.
 
 **Existing positions score higher (worse) by design.** A position held for 3 weeks has already captured most of its theta — the remaining risk/reward is worse than a fresh entry. This is the T-21 management principle: close at 50%, redeploy into fresh 45 DTE.
 
@@ -1330,22 +1440,22 @@ Loss is measured as a multiple of the premium collected. If you sold for $2.00 a
 
 #### Layer 2: Delta Gate
 
-Directional risk regardless of P&L. Delta measures assignment probability.
+Directional risk regardless of P&L. Delta measures assignment probability. Assignment is an **expected Wheel outcome**, not a failure.
 
-| Strategy | Threshold | Action |
+| Strategy | Threshold | Message |
 |----------|:---:|--------|
-| **CSP** | \|Δ\| ≥ 0.60 | 🛑 DELTA STOP — 60% assignment risk, too directional. Cut it. |
-| **CSP** | \|Δ\| ≥ 0.50 | ⚠️ ITM — monitor closely, prepare for assignment |
-| **CC** | Δ ≥ 0.50 | ⚠️ DELTA WARN — 50% chance called away. Prepare shares. |
+| **CSP** | \|Δ\| ≥ 0.60 | 🛑 DELTA STOP — too directional, cut it |
+| **CSP** | \|Δ\| ≥ 0.50 | 📈 ITM — Assignment probable, expected outcome |
+| **CC** | Δ ≥ 0.50 | 📈 High Assignment Probability — Expected CC outcome |
 
 #### Decision Priority (Highest Wins)
 
 ```
 🛑 STOP LOSS      >  🛑 DELTA STOP     >  ✅ CLOSE (50% profit)
-  >  🔄 ROLL       >  ⚠️ ALERT         >  👍 HOLD
+  >  📋 REVIEW    >  ⚠️ ALERT         >  👍 HOLD
 ```
 
-Loss prevention beats profit taking. A stop-loss trigger at 3× will override a 50% profit close decision.
+Loss prevention beats profit taking. A stop-loss trigger at 3× will override a 50% profit close decision. **Messages are thesis-aware**: underwater positions show "Monitor thesis, not price" rather than "evaluate exit" unless the thesis is actually broken.
 
 #### Config
 
@@ -1515,6 +1625,27 @@ tail -50 logs/options.log
 ## Tests
 
 ```bash
-pytest tests/ -v --tb=short
-pytest tests/ --cov=src --cov-report=term
+pytest tests/ -v --tb=short                       # 468 pass, 2 moomoo-dependent skipped
+pytest tests/ --cov=src --cov-report=term         # Coverage report
 ```
+
+**Test breakdown** (16 files, ~470 tests):
+
+| File | Tests | Coverage |
+|------|:-----:|----------|
+| `test_thesis_validation.py` | 52 | Thesis checks, guardrails, decision messages |
+| `test_constraints.py` | 58 | Strategy type, coverage, earnings, DTE, delta, sizing, IV, RoC, correlation, spread |
+| `test_trend.py` | 50+ | RSI, MACD, SMA, ADX, trend composite, signal generator |
+| `test_scoring.py` | 40+ | Fundamental, trend, ADX, options chain, wheel score, correlation, RoC |
+| `test_sentiment.py` | 25 | IV sentiment, volume/OI, price action, composite, strategy rules |
+| `test_signals.py` | 25 | Signal enum, CSP/CC decision matrix, confidence |
+| `test_holdings_exit.py` | 35 | Drawdown, SMA slope, backstop, dead zone, recovery math, roll discipline |
+| `test_oie_db.py` | 26 | Paper DB: schema, seed, open/close/expire/assign, snapshots, audit |
+| `test_oie_simulation.py` | 20 | Full lifecycle: CSP, CC, multi-cycle, audit trail, reset |
+| `test_screener_scoring.py` | 22 | Ticker score, contract penalty, reason bands, stars |
+| `test_holding_score.py` | 16 | Option decisions, stop tiers, delta gates, CC hunting |
+| `test_portfolio_loader.py` | 24 | Option code parsing, funds, positions, orders |
+| `test_portfolio_summary.py` | 8 | Income, sector breakdown, unrealized P&L |
+| `test_overlap.py` | 8 | Straddle/strangle detection, stacked calls, net scenarios |
+| `test_risk.py` | 30 | CC coverage, CSP coverage, collar check, assignment, portfolio risk |
+| `test_screener_score.py` | 6 | Shim re-exports, RoC, score stars, reason bands |

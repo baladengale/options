@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Portfolio — consolidated REAL-account state, P&L, fund status, and health.
+"""Portfolio — single umbrella for REAL-account state, P&L, health, thesis, and
+the systematic review timeline. Absorbs the former comprehensive_analysis.py.
 
-One wrapper over the src/ engine. Replaces the former portfolio_summary.py,
-portfolio_check.py, options_table.py, and liability_overlap.py (Part 2).
+Bare run is a full sweep: funds → P&L → health+guardrails → timeline →
+do-not-wheel → thesis validation → recommendations.
 
 Usage:
-    python3 scripts/portfolio.py             # full report (state + P&L + health)
-    python3 scripts/portfolio.py --fast      # funds + P&L only (no scoring)
-    python3 scripts/portfolio.py --health    # decisions + overlap + guardrails
+    python3 scripts/portfolio.py             # full sweep (all sections)
+    python3 scripts/portfolio.py --fast      # funds + P&L only (no scoring/thesis)
+    python3 scripts/portfolio.py --health    # decisions + overlap + guardrails only
+    python3 scripts/portfolio.py --thesis    # thesis validation on all holdings
+    python3 scripts/portfolio.py --schedule  # systematic timeline only
+    python3 scripts/portfolio.py --dnl       # do-not-wheel list only
     python3 scripts/portfolio.py --funds     # account funds only
     python3 scripts/portfolio.py --pnl       # positions + P&L + income
     python3 scripts/portfolio.py --orders    # order history for current positions
     python3 scripts/portfolio.py --orders AMD  # order history for specific ticker
-    python3 scripts/portfolio.py --no-external   # skip yfinance (offline)
+    python3 scripts/portfolio.py --no-external   # skip yfinance (skips thesis deep-checks)
 """
 import argparse
 import os
@@ -35,10 +39,16 @@ from src.data.moomoo_client import MoomooClient
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
 from src.data.guardrails import GuardrailChecker, SECTOR_MAP
+from src.guardrails.limits import GuardrailChecker as StagedGuardrails
 from src.config import get_config
 from src.risk.holdings_exit import evaluate_holding_exit, sma_slope, months_to_recover
 from src.risk.overlap import analyze_overlap
 from src.analysis.thesis import evaluate_thesis, fetch_thesis_inputs
+from src.analysis.thesis_validator import validate_investment_thesis, ThesisStatus
+from src.data.do_not_wheel_list import DoNotWheelList
+from src.system.scheduler import (
+    get_scheduled_action_type, get_system_status, should_allow_trading_decisions,
+)
 from src.scoring.holding_score import (
     _score_holding, _find_best_cc, _score_option, _parse_snapshot_row,
 )
@@ -49,14 +59,25 @@ from src.portfolio.summary import (
 
 
 def _resolve_sections(args) -> set:
+    """Decide which sections to print.
+
+    --fast           → funds + pnl only.
+    any selector set → only those sections.
+    bare run         → full sweep (orders stays opt-in via --orders).
+    """
     if args.fast:
         return {'funds', 'pnl'}
-    s = set()
-    if args.funds:   s.add('funds')
-    if args.pnl:     s.add('pnl')
-    if args.health:  s.add('health')
-    if args.orders:  s.add('orders')
-    return s or {'funds', 'pnl', 'health'}
+    explicit = set()
+    if args.funds:    explicit.add('funds')
+    if args.pnl:      explicit.add('pnl')
+    if args.health:   explicit.add('health')
+    if args.orders:   explicit.add('orders')
+    if args.thesis:   explicit.add('thesis')
+    if args.schedule: explicit.add('timeline')
+    if args.dnl:      explicit.add('dnl')
+    if explicit:
+        return explicit
+    return {'funds', 'pnl', 'health', 'timeline', 'dnl', 'thesis', 'recommendations'}
 
 
 def main():
@@ -66,6 +87,9 @@ def main():
     parser.add_argument('--funds', action='store_true', help='Account funds only')
     parser.add_argument('--pnl', action='store_true', help='Positions + P&L + income')
     parser.add_argument('--orders', nargs='?', const='ALL', help='Order history (optional: filter by ticker)')
+    parser.add_argument('--thesis', action='store_true', help='Thesis validation on all holdings')
+    parser.add_argument('--schedule', action='store_true', help='Systematic timeline / review schedule')
+    parser.add_argument('--dnl', action='store_true', help='Do-Not-Wheel exclusion list')
     parser.add_argument('--no-external', action='store_true', help='Skip yfinance (offline)')
     args = parser.parse_args()
 
@@ -96,6 +120,17 @@ def main():
 
     nlv = pf.net_liquidation
 
+    # Single yfinance client shared by health scoring + thesis validation.
+    yf_client = None
+    if not args.no_external:
+        try:
+            yf_client = YFinanceClient()
+        except Exception:
+            yf_client = None
+
+    # Recommendations run on the full sweep, or whenever both health + thesis run.
+    run_recommendations = ('recommendations' in sections) or ({'health', 'thesis'} <= sections)
+
     # ── FUNDS ──
     if 'funds' in sections:
         _print_funds(pf)
@@ -109,8 +144,29 @@ def main():
         _print_orders(args.orders, pf)
 
     # ── HEALTH (decisions + overlap + guardrails) ──
+    violations = []
     if 'health' in sections:
-        _print_health(pf, args, regime, regime_mult, today, nlv)
+        violations = _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv)
+
+    # ── TIMELINE (systematic review schedule) ──
+    if 'timeline' in sections:
+        _print_timeline(pf, nlv)
+
+    # ── DO-NOT-WHEEL ──
+    if 'dnl' in sections:
+        _print_do_not_wheel()
+
+    # ── THESIS VALIDATION ──
+    thesis_results = {}
+    if 'thesis' in sections:
+        thesis_results = _print_thesis(pf, yf_client)
+
+    # ── RECOMMENDATIONS ──
+    if run_recommendations:
+        stage = _determine_recovery_stage(pf, nlv)
+        trading_allowed = should_allow_trading_decisions()
+        _print_recommendations(pf, orders, nlv, thesis_results, violations,
+                               stage, trading_allowed)
 
     log.info(f"PORTFOLIO|regime={regime}|stocks={len(pf.stocks)}|options={len(pf.options)}|"
              f"nlv=${nlv:,.0f}|liquid=${pf.funds.liquid:,.0f}|sections={','.join(sorted(sections))}")
@@ -364,8 +420,7 @@ def _print_orders(ticker_filter, pf):
 # HEALTH  (decisions + overlap + guardrails)
 # ════════════════════════════════════════════════════════════════
 
-def _print_health(pf, args, regime, regime_mult, today, nlv):
-    yf_client = YFinanceClient() if not args.no_external else None
+def _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv):
     cfg = get_config()
 
     print(f"  💰 Liquid: ${pf.funds.liquid:,.0f} (cash ${pf.funds.cash:,.0f} + "
@@ -390,7 +445,7 @@ def _print_health(pf, args, regime, regime_mult, today, nlv):
             _print_overlap(reports, today)
 
     # ── Guardrails ──
-    _print_guardrails(pf, nlv)
+    return _print_guardrails(pf, orders, nlv)
 
 
 def _score_holdings(pf, moomoo, yf_client, cfg, regime, regime_mult, today):
@@ -518,7 +573,39 @@ def _print_overlap(reports, today):
     print()
 
 
-def _print_guardrails(pf, nlv):
+def _compute_staged_guardrails(pf, orders, nlv):
+    """Staged (recovery) guardrail view via src/guardrails/limits.py.
+    Shared by _print_guardrails and _print_recommendations so stage/violations
+    are computed once. Returns (stage, violations, summary_dict)."""
+    positions_dict = {
+        ticker: {'market_value': pos.get('mv', 0), 'sector': SECTOR_MAP.get(ticker, 'Other')}
+        for ticker, pos in pf.stocks.items()
+    }
+    filled_orders = sum(1 for o in orders if o.get('status') in ('FILLED_ALL', 'FILLED_PART'))
+    checker = StagedGuardrails(
+        net_liquidation=nlv,
+        cash=pf.funds.liquid,
+        buying_power=pf.funds.buying_power,
+        open_positions=len(pf.options),
+        monthly_orders=filled_orders,
+        csp_liability=pf.csp_liability,
+    )
+    violations = checker.check_all_guardrails(positions_dict)
+    return checker.get_current_stage(), violations, checker.get_summary()
+
+
+def _determine_recovery_stage(pf, nlv) -> str:
+    """Coarse recovery stage for recommendations (EMERGENCY/TARGET/COMFORT)."""
+    cash_buffer_pct = pf.funds.liquid / nlv if nlv > 0 else 0
+    csp_deployment_pct = pf.csp_liability / nlv if nlv > 0 else 0
+    if cash_buffer_pct < 0.10 or csp_deployment_pct > 0.50:
+        return "EMERGENCY"
+    if cash_buffer_pct < 0.15 or csp_deployment_pct > 0.35:
+        return "TARGET"
+    return "COMFORT"
+
+
+def _print_guardrails(pf, orders, nlv):
     # Build position list: only stocks with active options for wheel strategy
     tickers_with_options = {o['ticker'] for o in pf.options.values()}
     gc_positions = []
@@ -557,6 +644,174 @@ def _print_guardrails(pf, nlv):
         print(f"  🟡 WARN: {w}")
     if gr.all_clear and not gr.warnings:
         print("  ✅ All within limits")
+
+    # ── Staged recovery view (src/guardrails/limits.py) ──
+    stage, violations, summary = _compute_staged_guardrails(pf, orders, nlv)
+    print(f"\n  📐 STAGED RECOVERY — {stage}")
+    print(f"     Cash buffer: {summary['cash_buffer_pct']:.1%} | "
+          f"CSP deployment: {summary['csp_deployment_pct']:.1%} "
+          f"(limit {summary['limits']['csp']:.0%})")
+    print(f"     Position cap: {summary['limits']['position']:.0%} | "
+          f"Sector cap: {summary['limits']['sector']:.0%} | "
+          f"Positions: {summary['limits']['position_count']} | "
+          f"Monthly orders: {summary['limits']['monthly_orders']}")
+    for v in violations:
+        emoji = "🚨" if v.severity == "CRITICAL" else "🔴" if v.severity == "BLOCK" else "🟡"
+        print(f"     {emoji} {v.message}")
+    print()
+    return violations
+
+
+# ════════════════════════════════════════════════════════════════
+# TIMELINE  (systematic review schedule — pure, no network)
+# ════════════════════════════════════════════════════════════════
+
+def _print_timeline(pf, nlv):
+    current_review = get_scheduled_action_type()
+    trading_allowed = should_allow_trading_decisions()
+    stage = _determine_recovery_stage(pf, nlv)
+    status = get_system_status()
+    print(f"{'='*90}")
+    print(f"  📅 SYSTEMATIC TIMELINE")
+    print(f"{'='*90}")
+    print(f"  Current Review:    {current_review.value}")
+    print(f"  Trading Decisions: {'✅ ALLOWED' if trading_allowed else '❌ READ-ONLY'}")
+    print(f"  Recovery Stage:    {stage}")
+    print(f"  Next scheduled reviews:")
+    for name, when in status['next_reviews'].items():
+        print(f"    {name:<20s} {when[:19]}")
+    print()
+
+
+# ════════════════════════════════════════════════════════════════
+# DO-NOT-WHEEL  (persistent exclusion list — file I/O only)
+# ════════════════════════════════════════════════════════════════
+
+def _print_do_not_wheel():
+    dnl = DoNotWheelList()
+    exclusions = dnl.get_all_exclusions()
+    print(f"{'='*90}")
+    print(f"  🚫 DO-NOT-WHEEL LIST ({len(exclusions)} active)")
+    print(f"{'='*90}")
+    if not exclusions:
+        print("  (none)")
+    for e in exclusions:
+        print(f"  ❌ {e.ticker:<6s} until {e.expiration_date} ({e.months} months) — {e.reason}")
+    print()
+
+
+# ════════════════════════════════════════════════════════════════
+# THESIS VALIDATION  (deep checks need yfinance; skipped under --no-external)
+# ════════════════════════════════════════════════════════════════
+
+def _print_thesis(pf, yf_client) -> dict:
+    """Validate the investment thesis for every holding. Returns {ticker: report}.
+    Auto-adds BROKEN tickers to the Do-Not-Wheel list (6 months)."""
+    print(f"{'='*90}")
+    print(f"  🔍 THESIS VALIDATION ({len(pf.stocks)} holdings)")
+    print(f"{'='*90}")
+    if yf_client is None:
+        print("  ⚠️  Skipped (--no-external): deep thesis checks require yfinance.\n")
+        return {}
+    if not pf.stocks:
+        print("  (no stock holdings)\n")
+        return {}
+
+    results = {}
+    dnl = DoNotWheelList()
+    with MoomooClient() as moomoo:
+        for ticker in sorted(pf.stocks):
+            try:
+                snap = moomoo.get_stock_snapshot(f'US.{ticker}')
+                report = validate_investment_thesis(
+                    ticker=ticker, entry_date=None, entry_thesis={},
+                    current_snapshot=snap, yf_client=yf_client)
+                results[ticker] = report
+                status = report.status
+                emoji = ("✅" if status == ThesisStatus.INTACT
+                         else "⚠️" if status == ThesisStatus.DAMAGED else "🚨")
+                print(f"  {emoji} {ticker:<6s} {status.value}")
+                for chk in report.checks:
+                    if chk.severity == "CRITICAL":
+                        print(f"      🚨 {chk.message}")
+                    elif chk.severity == "WARNING":
+                        print(f"      ⚠️  {chk.message}")
+                if status in (ThesisStatus.BROKEN, ThesisStatus.DAMAGED):
+                    print(f"      → {report.recommended_action}")
+                # Auto-add broken-thesis tickers to Do-Not-Wheel
+                if status == ThesisStatus.BROKEN:
+                    reason = ("; ".join(c.message for c in report.checks
+                                        if c.severity == "CRITICAL") or "Thesis broken")
+                    dnl.add(ticker, months=6, reason=reason)
+                    print(f"      🔧 Added {ticker} to Do-Not-Wheel list (6 months)")
+            except Exception as e:
+                log.warning(f"Thesis validation error for {ticker}: {e}")
+                print(f"  ⚠️  {ticker}: thesis validation error — {e}")
+
+    intact = sum(1 for r in results.values() if r.status == ThesisStatus.INTACT)
+    damaged = sum(1 for r in results.values() if r.status == ThesisStatus.DAMAGED)
+    broken = sum(1 for r in results.values() if r.status == ThesisStatus.BROKEN)
+    print(f"\n  📊 SUMMARY: ✅ {intact} intact   ⚠️ {damaged} damaged   🚨 {broken} broken\n")
+    return results
+
+
+# ════════════════════════════════════════════════════════════════
+# RECOMMENDATIONS  (derived from live pf state — no hardcoded values)
+# ════════════════════════════════════════════════════════════════
+
+def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage, trading_allowed):
+    print(f"{'='*90}")
+    print(f"  📋 RECOMMENDATIONS")
+    print(f"{'='*90}")
+    recs = []
+
+    cash = pf.funds.liquid
+    csp_liab = pf.csp_liability
+    if stage == "EMERGENCY" or csp_liab > cash:
+        shortfall = csp_liab - cash
+        recs.append(("CRITICAL", "Reduce CSP liability below available cash",
+                     f"CSP liability ${csp_liab:,.0f} vs cash ${cash:,.0f} "
+                     f"(shortfall ${shortfall:,.0f}). Let puts expire / close the "
+                     f"deepest-ITM puts; open no new CSPs until covered."))
+
+    cash_pct = cash / nlv if nlv > 0 else 0
+    if cash_pct < 0.15:
+        recs.append(("HIGH", f"Build cash buffer to 15%+ (now {cash_pct:.0%})",
+                     "Add via CC income on owned shares; pause new CSPs."))
+
+    broken = [t for t, r in thesis_results.items() if r.status == ThesisStatus.BROKEN]
+    if broken:
+        recs.append(("CRITICAL", f"Exit broken-thesis positions: {', '.join(broken)}",
+                     "Close, then add to Do-Not-Wheel list for 6 months."))
+    damaged = [t for t, r in thesis_results.items() if r.status == ThesisStatus.DAMAGED]
+    if damaged:
+        recs.append(("HIGH", f"Monitor damaged-thesis positions: {', '.join(damaged)}",
+                     "Weekly review; re-evaluate in 7 days."))
+
+    v_pos = pf.stocks.get('V')
+    if v_pos:
+        v_pct = (v_pos.get('mv', 0) / nlv) if nlv > 0 else 0
+        if v_pct > 0.30:
+            recs.append(("MEDIUM", f"Reduce V concentration ({v_pct:.0%}) via CC assignment",
+                         "Sell CCs on V; let assignment convert shares to cash for redeployment."))
+
+    filled = sum(1 for o in orders if o.get('status') in ('FILLED_ALL', 'FILLED_PART'))
+    if filled > 10:
+        recs.append(("HIGH", "Reduce trading frequency to a systematic Wheel",
+                     f"{filled} filled orders in window — target 8–10/month. "
+                     f"Use weekly reviews only; let positions expire naturally."))
+
+    if not trading_allowed:
+        recs.append(("LOW", "Current window is monitoring-only",
+                     "Decisions resume at the next weekly thesis review (Mon 9AM)."))
+
+    if not recs:
+        print("  ✅ No actions — portfolio within limits and theses intact.")
+    for i, (prio, title, desc) in enumerate(recs, 1):
+        emoji = "🚨" if prio == "CRITICAL" else "⚠️" if prio == "HIGH" else "💡"
+        print(f"  {i}. {emoji} [{prio}] {title}")
+        print(f"     {desc}")
+    print()
 
 
 if __name__ == '__main__':

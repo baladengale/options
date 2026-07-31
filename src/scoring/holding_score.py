@@ -148,23 +148,23 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     if dte <= 3:
         score -= 1.5
         if 'CLOSE' not in decision:
-            decision = '⚠️  EXPIRING — close or roll'
+            decision = '📅 Expiring Soon — Let expire/assign naturally'
     elif dte <= 7:
         score += 1.0
         if profit_captured < 30:
-            decision = '⚠️  NEAR EXPIRY — monitor closely'
+            decision = '📅 Near Expiry — Monitor only, no action needed'
     elif dte <= 14:
         if profit_captured < 0:  # underwater
             score += 1.0
-            decision = '⚠️  UNDERWATER — consider rolling'
+            decision = '📊 Position Underwater — Monitor thesis, not price'
         elif 'CLOSE' not in decision:
-            decision = '⏰ <21 DTE — close or roll (mgmt point)'
+            decision = '📋 Near Management Point — Review, no action needed'
     elif dte <= 21:
         if profit_captured < 0:
-            decision = '🔄 CONSIDER ROLLING'
+            decision = '📋 Review Position — Evaluate rolling at weekly check'
         elif 'CLOSE' not in decision:
             score -= 0.5
-            decision = '⏰ 21 DTE — close or roll (mgmt point)'
+            decision = '📋 At Management Point — Weekly review, no action needed'
 
     # Layer 2: Delta gates (from config)
     cfg = get_config()
@@ -173,14 +173,14 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
         decision = '🛑 |Δ|≥0.60 — roll / take assignment / exit'
     elif strategy == 'CC' and delta >= cfg.stop_delta_cc_critical:
         score += 1.5
-        decision = '⚠️  DELTA WARN — Δ≥0.50, assignment risk'
+        decision = '📈 High Assignment Probability — Expected CC outcome'
     elif strategy == 'CSP' and delta >= cfg.stop_delta_csp_itm:
         score += 1.0
         if 'CLOSE' not in decision and 'STOP' not in decision:
-            decision = '⚠️  ITM — assignment risk'
+            decision = '📈 ITM — Assignment probable, expected outcome'
     elif strategy == 'CSP' and delta >= cfg.stop_delta_csp_decision:
         score += 0.5
-        if decision == 'HOLD' or '21 DTE' in decision:
+        if decision == 'HOLD' or 'Management Point' in decision:
             decision = '🔶 Δ≥0.40 decision time — plan roll/assign/exit'
     elif strategy == 'CC' and delta >= cfg.stop_delta_cc_warn:
         score += 0.5
@@ -227,11 +227,34 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             score += 1.5
             decision = '⚠️  EARNINGS IN DTE — close before'
 
-    # Heavy loss catch-all
+    # Heavy loss catch-all - NOW THESIS-AWARE
     if pl < -1000 and 'STOP' not in decision:
-        score += 1.5
-        if 'CLOSE' not in decision:
-            decision = '🔴 UNDERWATER — evaluate exit'
+        # Use thesis validation instead of generic "evaluate exit"
+        try:
+            from src.analysis.thesis_validator import quick_thesis_check
+            from src.data.moomoo_client import MoomooClient
+
+            # Get snapshot for thesis check
+            moomoo = MoomooClient()
+            snapshot = moomoo.get_stock_snapshot(f"US.{pos['ticker']}")
+
+            if snapshot:
+                thesis_check = quick_thesis_check(pos['ticker'], snapshot)
+
+                if thesis_check['broken']:
+                    score += 0.5
+                    decision = '🚨 THESIS BROKEN — Exit Wheel position'
+                elif thesis_check['damaged']:
+                    score += 1.0
+                    decision = '⚠️  THESIS DAMAGED — Monitor, no action needed'
+                else:
+                    score += 1.5
+                    decision = '📊 Position Down — Thesis intact, hold position'
+        except Exception:
+            # Fallback to original message if thesis check fails
+            score += 1.5
+            if 'CLOSE' not in decision:
+                decision = '🔴 UNDERWATER — Monitor thesis, not price'
 
     return max(1.0, min(10.0, score)), decision
 
