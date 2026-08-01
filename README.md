@@ -180,7 +180,7 @@ options/
 │   ├── test_portfolio_loader.py       # Portfolio loader tests
 │   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
 │   ├── test_holdings_exit.py          # Exit framework tests
-│   └── ...                            # 553 tests (490 offline unit + integration/infrastructure)
+│   └── ...                            # 574 tests (511 offline unit + integration/infrastructure)
 ├── docs/                              # Research docs + implementation guides
 ├── .claude/skills/                    # Claude Code skills (oie, oie-paper)
 ├── CLAUDE.md                          # AI coding instructions
@@ -315,17 +315,30 @@ Every position is validated against its original investment thesis. The framewor
 | **TECHNICAL DAMAGE** | Warning signs present | Weekly monitoring — re-evaluate in 7 days |
 | **THESIS BROKEN** | Critical failure | Exit position — add to Do-Not-Wheel list for 6 months |
 
+**Validation scope**: `scripts/portfolio.py --thesis` validates the **unified set** of stocks held + option underlyings + watchlist tickers — each ticker once, labeled `[stock]`/`[option]`/`[watch]`. (Previously stocks only.)
+
 **Checks performed** (in `src/analysis/thesis_validator.py`):
 
 | Check | CRITICAL (BROKEN) | WARNING (DAMAGED) |
 |-------|:---:|:---:|
 | Earnings trend | Analyst downgrades >20% | Downgrades >10% |
-| Fundamental health | P/E negative or >100 | P/E >50 |
+| Fundamental health | P/E negative or > `pe_ratio_critical` (default 100) | P/E > `pe_ratio_warning` (default 50) |
 | Technical damage | Price >25% below 200 SMA | Price >15% below 200 SMA |
 | Volatility regime | — | HV >100% |
 | Price performance | >40% off 52-week high | >25% off 52-week high |
 
-**Config**: `config/rules.yaml` → `thesis_validation:` section. All thresholds configurable.
+**Config**: `config/rules.yaml` → `thesis_validation:` section. All thresholds configurable, including the P/E cutoffs.
+
+**Trusted tickers** — high-growth names you want to hold despite a high P/E can be exempted from the P/E *valuation* check (negative P/E still flags — it's a solvency signal). Add them under `thesis_validation.trusted_tickers`:
+
+```yaml
+thesis_validation:
+  pe_ratio_warning: 50
+  pe_ratio_critical: 100
+  trusted_tickers: [AMD, TSLA, PLTR]   # skip the high-P/E valuation check
+```
+
+This resolves the "blocking good companies I trust" case: AMD/PLTR/TSLA no longer auto-exit purely on P/E, while every other check still applies.
 
 ---
 
@@ -359,6 +372,13 @@ dnl.is_excluded('BE')  # → True for 6 months, then auto-expires
 ```
 
 Integrated into `scripts/screener.py` as a pre-filter before scoring. Stocks on the list are skipped with a log message showing the reason and expiration date.
+
+**Auto-recovery**: a ticker is also *removed* early when its thesis recovers — not just after the 6-month clock. Each `--thesis` run re-validates every listed ticker and removes any whose status returns to `recovery_status_for_removal` (default `INTACT`). So a stock that heals next week re-enters the wheel immediately; only tickers never re-validated rely on the 6-month expiry as a safety net.
+
+```yaml
+thesis_validation:
+  recovery_status_for_removal: INTACT   # INTACT (default) or DAMAGED
+```
 
 ---
 
@@ -1625,12 +1645,38 @@ tail -50 logs/options.log
 | Yahoo Finance | Analyst ratings, earnings, institutional, news, VIX, yields | No |
 | alternative.me | Fear & Greed Index | No |
 
+## Data Freshness & Caching
+
+**There is no caching engine.** Account funds, positions, and order history are fetched **live from moomoo on every CLI invocation** with `refresh_cache=True` (`src/data/portfolio_loader.py`). Nothing about your real account is cached between runs.
+
+The only in-process caches are two per-session dicts in `MoomooClient` (`_history_cache`, `_chain_cache`) for daily OHLCV and option-chain *codes*. They have no TTL, are cleared on `close()`, and die at process exit — so they cannot go stale across runs. Their value is avoiding repeat K-line/chain calls *within* a single run.
+
+**Buying power can legitimately vary run-to-run.** `_buying_power()` prefers moomoo's margin-inclusive `power` (purchasing power against cash + securities) and falls back to cash-only `usd_net_cash_power` when `power` is 0/unavailable. A margined account may report a much higher BP (margin-inclusive) than an unmargined moment (cash-only). This is field selection, not staleness. HKD-denominated `power` is converted to USD.
+
+## Realized Income (single source of truth)
+
+`--pnl` and `--orders` now use the **same** order data and the **same** classification, so their totals always agree. Both flow through `src/portfolio/summary.py`:
+
+- `compute_income()` powers the `--pnl` "All-Time Option Income" block.
+- `order_income_breakdown()` powers the `--orders` 90-day table.
+
+Classification keys on the **instrument first**, then the trade side — because moomoo returns covered-call sells as plain `SELL` (not `SELL_SHORT`) and CC buy-to-close as `BUY`:
+
+| Instrument | Trade side | Bucket |
+|------------|------------|--------|
+| Option code | `SELL` / `SELL_SHORT` | `premium_collected` (×100) |
+| Option code | `BUY` / `BUY_BACK` | `premium_paid` (×100) |
+| Stock code | `BUY` | `stock_bought` (×1) |
+| Stock code | `SELL` | `stock_sold` (×1) |
+
+This fixed a discrepancy where covered-call premium was misclassified as stock sales (understating option income and inflating stock totals).
+
 ## Tests
 
 ```bash
 # Unit suite — deterministic, no network needed (CI runs exactly this):
 pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
-              --ignore=tests/performance -m "not slow"          # 490 passed
+              --ignore=tests/performance -m "not slow"          # 511 passed
 
 # With coverage:
 pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
@@ -1639,30 +1685,32 @@ pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
 # Everything (incl. integration/infrastructure). Some tests in
 # tests/integration + tests/infrastructure make live moomoo/yfinance calls
 # and need OpenD + network — run them with the services up, or -m "not slow".
-pytest tests/                                                    # 553 collected
+pytest tests/                                                    # 574 collected
 ```
 
 `pytest-timeout` is required (declared in `requirements-dev.txt`) — `pytest.ini`
 sets a 300s per-test cap and registers the `timeout` marker.
 
-**Unit test breakdown** (~490 tests, all offline):
+**Unit test breakdown** (~511 tests, all offline):
 
 | File | Tests | Coverage |
 |------|:-----:|----------|
-| `test_thesis_validation.py` | 52 | Thesis checks, guardrails, decision messages |
+| `test_thesis_validation.py` | 55 | Thesis checks (config P/E + trust list), guardrails, decision messages |
 | `test_constraints.py` | 58 | Strategy type, coverage, earnings, DTE, delta, sizing, IV, RoC, correlation, spread |
 | `test_trend.py` | 54 | RSI, MACD, SMA, ADX, trend composite, signal generator |
 | `test_scoring.py` | 48 | Fundamental, trend, ADX, options chain, wheel score, correlation, RoC |
 | `test_holdings_exit.py` | 37 | Drawdown, SMA slope, backstop, dead zone, recovery math, roll discipline |
 | `test_signals.py` | 31 | Signal enum, CSP/CC decision matrix, confidence |
+| `test_portfolio_loader.py` | 40 | Option code parsing, funds (`_finite`/`_buying_power`), positions, orders |
 | `test_sentiment.py` | 25 | IV sentiment, volume/OI, price action, composite, strategy rules |
 | `test_oie_db.py` | 27 | Paper DB: schema, seed, open/close/expire/assign, snapshots, audit |
 | `test_screener_scoring.py` | 27 | Ticker score, contract penalty, reason bands, stars |
 | `test_oie_simulation.py` | 19 | Full lifecycle: CSP, CC, multi-cycle, audit trail, reset |
-| `test_portfolio_loader.py` | 40 | Option code parsing, funds (`_finite`/`_buying_power`), positions, orders |
 | `test_risk.py` | 26 | CC coverage, CSP coverage, collar check, assignment, portfolio risk |
+| `test_portfolio_summary.py` | 16 | Income classification (option-first), monthly, sector, breakdown, P&L |
 | `test_holding_score.py` | 16 | Option decisions, stop tiers, delta gates, CC hunting |
 | `test_screener_score.py` | 7 | Shim re-exports, RoC, score stars, reason bands |
+| `test_portfolio_thesis_unified.py` | 10 | Unified thesis set (stocks∪options∪watchlist), DNL auto-recovery |
 | `test_portfolio_monthly_guardrail.py` | 6 | Monthly order bucketing (`_filled_orders_this_month`) |
 | `test_portfolio_summary.py` | 8 | Income, sector breakdown, unrealized P&L |
 | `test_overlap.py` | 9 | Straddle/strangle detection, stacked calls, net scenarios |

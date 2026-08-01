@@ -92,7 +92,7 @@ def test_thesis_report_creation():
 def test_fundamental_health_negative_pe():
     """P/E < 0 → CRITICAL (company losing money)."""
     snap = _snap(pe_ratio=-456.0)
-    check = _check_fundamental_health(snap)
+    check = _check_fundamental_health('TEST', snap)
     assert check is not None
     assert check.severity == "CRITICAL"
     assert check.metric == "fundamentals_pe"
@@ -102,7 +102,7 @@ def test_fundamental_health_negative_pe():
 def test_fundamental_health_extreme_pe():
     """P/E > 100 → CRITICAL (speculative valuation)."""
     snap = _snap(pe_ratio=150.0)
-    check = _check_fundamental_health(snap)
+    check = _check_fundamental_health('TEST', snap)
     assert check is not None
     assert check.severity == "CRITICAL"
 
@@ -110,7 +110,7 @@ def test_fundamental_health_extreme_pe():
 def test_fundamental_health_elevated_pe():
     """P/E > 50 → WARNING (concerning valuation)."""
     snap = _snap(pe_ratio=65.0)
-    check = _check_fundamental_health(snap)
+    check = _check_fundamental_health('TEST', snap)
     assert check is not None
     assert check.severity == "WARNING"
 
@@ -118,7 +118,7 @@ def test_fundamental_health_elevated_pe():
 def test_fundamental_health_normal_pe():
     """P/E 20 → no check returned (healthy)."""
     snap = _snap(pe_ratio=20.0)
-    check = _check_fundamental_health(snap)
+    check = _check_fundamental_health('TEST', snap)
     assert check is None
 
 
@@ -127,8 +127,41 @@ def test_fundamental_health_missing_pe():
     snap = _snap()
     # Force pe_ratio to None
     snap.pe_ratio = None
-    check = _check_fundamental_health(snap)
+    check = _check_fundamental_health('TEST', snap)
     assert check is None
+
+
+def test_fundamental_health_trusted_ticker_skips_pe(monkeypatch):
+    """A trusted ticker skips the high-P/E valuation check (user accepts it)."""
+    from src.config import get_config
+    # Trust AMD even though its P/E would normally be CRITICAL
+    monkeypatch.setattr(type(get_config()), 'trusted_tickers', {'AMD'})
+    snap = _snap(pe_ratio=184.0)   # > 100 critical threshold
+    assert _check_fundamental_health('AMD', snap) is None
+
+
+def test_fundamental_health_trusted_ticker_still_flags_negative_pe(monkeypatch):
+    """Trust skips valuation, not solvency: negative P/E still CRITICAL."""
+    from src.config import get_config
+    monkeypatch.setattr(type(get_config()), 'trusted_tickers', {'AMD'})
+    snap = _snap(pe_ratio=-456.0)
+    check = _check_fundamental_health('AMD', snap)
+    assert check is not None and check.severity == "CRITICAL"
+
+
+def test_fundamental_health_thresholds_from_config(monkeypatch):
+    """P/E thresholds are read from config, not hardcoded."""
+    from src.config import get_config
+    cfg = get_config()
+    # Raise the critical threshold so P/E 150 is only a WARNING, not CRITICAL
+    monkeypatch.setattr(cfg, 'thesis_validation', lambda k, d=None: {
+        'pe_ratio_warning': 50, 'pe_ratio_critical': 250,
+        'pe_negative_critical': True,
+    }.get(k, d))
+    monkeypatch.setattr(type(cfg), 'trusted_tickers', set())
+    snap = _snap(pe_ratio=150.0)
+    check = _check_fundamental_health('TEST', snap)
+    assert check is not None and check.severity == "WARNING"
 
 
 # ── _check_price_performance ───────────────────────────────────────

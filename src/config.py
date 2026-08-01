@@ -280,6 +280,26 @@ class Config:
         return self._data.get('holdings_exit', {}).get('thesis', {}).get(key, default)
 
     # ═══════════════════════════════════════════════════════════
+    # THESIS VALIDATION (weekly checks: P/E, SMA, earnings, price perf)
+    # ═══════════════════════════════════════════════════════════
+
+    def thesis_validation(self, key: str, default=None):
+        """Get a thesis-validation parameter from config/rules.yaml.
+
+        e.g., thesis_validation('pe_ratio_critical') → 100
+        """
+        return self._data.get('thesis_validation', {}).get(key, default)
+
+    @property
+    def trusted_tickers(self) -> set:
+        """Tickers that skip the P/E thesis check (user accepts their valuation).
+
+        Read from thesis_validation.trusted_tickers; upper-cased and US.-stripped.
+        """
+        raw = self._data.get('thesis_validation', {}).get('trusted_tickers', []) or []
+        return {str(t).upper().replace('US.', '') for t in raw}
+
+    # ═══════════════════════════════════════════════════════════
     # CC MANAGEMENT
     # ═══════════════════════════════════════════════════════════
 

@@ -236,6 +236,22 @@ thesis_validation:
   # Fundamental health minimums
   fundamental_score_minimum: 3       # 1-10 scale, below = CRITICAL
 
+  # P/E valuation thresholds — high-growth stocks naturally carry high P/E.
+  # Tune these rather than relying on hardcoded defaults.
+  pe_ratio_warning: 50               # DAMAGED if P/E above this
+  pe_ratio_critical: 100             # BROKEN if P/E above this
+  pe_negative_critical: true         # BROKEN if P/E < 0 (company losing money)
+
+  # Trusted tickers skip the P/E check entirely (you accept their valuation).
+  # Other checks (earnings, SMA, volatility, price perf) still apply.
+  # Example: [AMD, TSLA, PLTR]
+  trusted_tickers: []
+
+  # Do-Not-Wheel auto-removal: when a re-validated ticker's thesis recovers to
+  # this status or better, it is removed from the exclusion list early instead
+  # of waiting out the full months-long expiry.
+  recovery_status_for_removal: INTACT   # INTACT (default) or DAMAGED
+
   # Technical damage thresholds (percent below 200 SMA)
   price_vs_200sma_threshold: -15     # WARNING if >15% below
   price_vs_200sma_critical: -25      # CRITICAL if >25% below

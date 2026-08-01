@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 # Import from existing modules
 from src.data.models import StockSnapshot
 from src.data.yfinance_client import YFinanceClient
+from src.config import get_config
 
 log = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def validate_investment_thesis(
             checks.append(earnings_check)
 
         # === CHECK 2: Fundamental Health ===
-        fundamental_check = _check_fundamental_health(current_snapshot)
+        fundamental_check = _check_fundamental_health(ticker, current_snapshot)
         if fundamental_check:
             checks.append(fundamental_check)
 
@@ -216,19 +217,32 @@ def _check_earnings_trend(
     return None
 
 
-def _check_fundamental_health(snapshot: StockSnapshot) -> Optional[ThesisCheck]:
+def _check_fundamental_health(ticker: str, snapshot: StockSnapshot) -> Optional[ThesisCheck]:
     """
-    Check fundamental health using P/E ratio and other metrics
+    Check fundamental health using P/E ratio and other metrics.
 
-    CRITICAL if: P/E negative or >100 (fundamentals broken)
-    WARNING if: P/E >50 (concerning valuation)
+    Thresholds come from config/rules.yaml → thesis_validation so they can be
+    tuned without code changes. Trusted tickers (thesis_validation.trusted_tickers)
+    skip the P/E valuation check entirely — the user accepts their valuation.
+    A negative P/E still flags unless pe_negative_critical is false.
+
+    CRITICAL if: P/E negative (configurable) or above pe_ratio_critical
+    WARNING if: P/E above pe_ratio_warning
     """
     pe_ratio = snapshot.pe_ratio if hasattr(snapshot, 'pe_ratio') else None
 
     if pe_ratio is None or pe_ratio == 0:
         return None
 
-    if pe_ratio < 0:
+    cfg = get_config()
+    pe_warning = cfg.thesis_validation('pe_ratio_warning', 50)
+    pe_critical = cfg.thesis_validation('pe_ratio_critical', 100)
+    pe_negative_critical = cfg.thesis_validation('pe_negative_critical', True)
+    trusted = cfg.trusted_tickers
+
+    # Negative P/E = company losing money — flag unless explicitly disabled.
+    # Trusted tickers skip only the *valuation* (high-P/E) check, not solvency.
+    if pe_ratio < 0 and pe_negative_critical:
         return ThesisCheck(
             metric="fundamentals_pe",
             current_value=pe_ratio,
@@ -237,20 +251,26 @@ def _check_fundamental_health(snapshot: StockSnapshot) -> Optional[ThesisCheck]:
             status="FAILED",
             message=f"Negative P/E ratio ({pe_ratio:.1f}) - company losing money"
         )
-    elif pe_ratio > 100:
+
+    # Trusted tickers skip the high-P/E valuation check.
+    if ticker and ticker.upper().replace('US.', '') in trusted:
+        log.debug(f"{ticker}: trusted — skipping P/E valuation check (P/E {pe_ratio:.1f})")
+        return None
+
+    if pe_ratio > pe_critical:
         return ThesisCheck(
             metric="fundamentals_pe",
             current_value=pe_ratio,
-            threshold=100,
+            threshold=pe_critical,
             severity="CRITICAL",
             status="FAILED",
             message=f"P/E ratio extremely high ({pe_ratio:.1f}) - speculative valuation"
         )
-    elif pe_ratio > 50:
+    elif pe_ratio > pe_warning:
         return ThesisCheck(
             metric="fundamentals_pe",
             current_value=pe_ratio,
-            threshold=50,
+            threshold=pe_warning,
             severity="WARNING",
             status="CONCERNING",
             message=f"P/E ratio elevated ({pe_ratio:.1f}) - monitor fundamentals"
@@ -438,7 +458,8 @@ def quick_thesis_check(ticker: str, snapshot: StockSnapshot) -> dict:
         ...     print("Thesis broken - exit position")
     """
     try:
-        # Quick fundamental check (P/E)
+        # Quick fundamental check (P/E) — honors the same config + trust list
+        # as the full validator so decision messages stay consistent with it.
         pe_ratio = snapshot.pe_ratio if hasattr(snapshot, 'pe_ratio') else None
 
         # Quick price performance check
@@ -448,10 +469,21 @@ def quick_thesis_check(ticker: str, snapshot: StockSnapshot) -> dict:
         broken = False
         damaged = False
 
-        # Check for broken thesis (P/E negative or >100, or stock down >40%)
-        if pe_ratio and (pe_ratio < 0 or pe_ratio > 100):
-            broken = True
-        elif week_52_high and week_52_high > 0:
+        cfg = get_config()
+        pe_critical = cfg.thesis_validation('pe_ratio_critical', 100)
+        pe_negative_critical = cfg.thesis_validation('pe_negative_critical', True)
+        trusted = cfg.trusted_tickers
+        is_trusted = ticker and ticker.upper().replace('US.', '') in trusted
+
+        # P/E drives BROKEN: negative (solvency) or above critical (valuation).
+        # Trusted tickers skip the high-P/E valuation flag, not the negative one.
+        if pe_ratio:
+            if pe_ratio < 0 and pe_negative_critical:
+                broken = True
+            elif pe_ratio > pe_critical and not is_trusted:
+                broken = True
+
+        if not broken and week_52_high and week_52_high > 0:
             pct_off_high = ((current_price - week_52_high) / week_52_high) * 100
             if pct_off_high < -40:
                 broken = True

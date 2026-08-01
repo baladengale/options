@@ -55,6 +55,7 @@ from src.scoring.holding_score import (
 from src.portfolio.summary import (
     compute_income, compute_sector_breakdown,
     unrealized_stock_pl, unrealized_option_pl, stock_market_value,
+    order_income_breakdown,
 )
 
 
@@ -141,7 +142,7 @@ def main():
 
     # ── ORDERS (order history) ──
     if 'orders' in sections:
-        _print_orders(args.orders, pf)
+        _print_orders(args.orders, orders)
 
     # ── HEALTH (decisions + overlap + guardrails) ──
     violations = []
@@ -278,141 +279,55 @@ def _print_pnl(pf, orders, nlv, today):
 # ORDERS  (order history)
 # ════════════════════════════════════════════════════════════════
 
-def _print_orders(ticker_filter, pf):
-    """Fetch and display order history from moomoo."""
-    from moomoo import OpenSecTradeContext, TrdEnv
-    from datetime import datetime, timedelta
-    import re
+def _print_orders(ticker_filter, orders):
+    """Display filled order history for the last 90 days.
 
-    def parse_option_code(code):
-        """Parse option code into readable format."""
-        parts = re.match(r"US\.(\w+?)(\d{2})(\d{2})(\d{2})([CP])(\d+)", code)
-        if parts:
-            ticker, yr, mo, dy, opt_type, strike_val = parts.groups()
-            expiry = f"20{yr}-{mo}-{dy}"
-            strike = float(strike_val) / 1000
-            return ticker, expiry, opt_type, strike
-        return None, None, None, None
-
+    Reuses the shared order list already fetched by main() (fetch_orders) and
+    the order_income_breakdown helper, so these totals ALWAYS agree with the
+    --pnl view (same data, same classification). No separate moomoo connection.
+    """
     print(f"{'='*90}")
     print(f"  📋 ORDER HISTORY")
     print(f"{'='*90}")
 
-    if ticker_filter != 'ALL':
-        print(f"  🔍 Filtering by ticker: {ticker_filter}")
+    flt = ticker_filter if ticker_filter != 'ALL' else None
+    if flt:
+        print(f"  🔍 Filtering by ticker: {flt}")
         print()
 
-    try:
-        trd = OpenSecTradeContext(host='127.0.0.1', port=11111, ai_type=1)
+    rows, summary = order_income_breakdown(orders, ticker_filter=flt, days=90)
 
-        # Get account list
-        ret, acc_list = trd.get_acc_list()
+    # Option orders only in this view (matches the original behaviour).
+    opt_rows = [r for r in rows if r.is_option]
+    label = f"{flt} option orders" if flt else "all option orders"
+    print(f"  Showing {label} (last 90 days, filled only)")
 
-        if ret != RET_OK:
-            print("  ❌ Failed to connect to moomoo")
-            trd.close()
-            return
-
-        for _, acc in acc_list.iterrows():
-            if str(acc.get('trd_env', '')) == 'SIMULATE':
-                continue
-
-            acc_id = acc['acc_id']
-
-            # Calculate date range for last 90 days
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=90)
-
-            ret1, hist = trd.history_order_list_query(
-                trd_env=TrdEnv.REAL, acc_id=acc_id,
-                start=start_date.strftime('%Y-%m-%d'),
-                end=end_date.strftime('%Y-%m-%d')
-            )
-
-            if ret1 == RET_OK and hist is not None:
-                # Filter orders based on ticker_filter
-                if ticker_filter == 'ALL':
-                    # Show all option orders
-                    filtered_orders = hist[hist['code'].str.contains(r'\d{6}[CP]\d+', na=False)]
-                    print(f"  Showing all option orders (last 90 days, filled only)")
-                else:
-                    # Filter by specific ticker
-                    filtered_orders = hist[hist['code'].str.contains(ticker_filter, na=False)]
-                    print(f"  Showing {ticker_filter} option orders (last 90 days, filled only)")
-
-                # Skip cancelled orders
-                filtered_orders = filtered_orders[~filtered_orders['order_status'].str.contains('CANCELLED', na=False)]
-
-                if len(filtered_orders) == 0:
-                    print(f"  ⚠️  No filled orders found for '{ticker_filter}'")
-                else:
-                    print(f"  Found {len(filtered_orders)} filled orders:")
-                    print()
-
-                    # Sort by create time (newest first)
-                    filtered_orders = filtered_orders.sort_values('create_time', ascending=False)
-
-                    print(f"  {'Time':<20s} {'Action':<15s} {'Details':<35s} {'Qty':>6s} {'Price':>10s} {'Total $':>12s}")
-                    print(f"  {'-'*20} {'-'*15} {'-'*35} {'-'*6} {'-'*10} {'-'*12}")
-
-                    total_premium_received = 0
-                    total_premium_paid = 0
-                    total_trades = 0
-
-                    for idx, order in filtered_orders.iterrows():
-                        code = str(order.get('code', ''))
-                        create_time = str(order.get('create_time', ''))[:19]
-                        side = str(order.get('trd_side', ''))
-                        qty = float(order.get('qty', 0) or 0)
-                        price = float(order.get('dealt_avg_price', 0) or order.get('price', 0) or 0)
-
-                        # Parse option code
-                        ticker, expiry, opt_type, strike = parse_option_code(code)
-
-                        # Calculate total transaction amount
-                        total_amount = abs(qty) * price * 100  # Options are 100 shares per contract
-
-                        # Format action description
-                        if side in ('SELL', 'SELL_SHORT'):
-                            action = "💰 SOLD"
-                            total_premium_received += total_amount
-                            if opt_type == 'P':
-                                details = f"{ticker} PUT ${strike:.0f} {expiry}"
-                            else:
-                                details = f"{ticker} CALL ${strike:.0f} {expiry}"
-                        elif side in ('BUY', 'BUY_BACK'):
-                            action = "🔴 BOUGHT"
-                            total_premium_paid += total_amount
-                            if opt_type == 'P':
-                                details = f"{ticker} PUT ${strike:.0f} {expiry}"
-                            else:
-                                details = f"{ticker} CALL ${strike:.0f} {expiry}"
-                        else:
-                            action = f"❓ {side}"
-                            details = code
-
-                        total_trades += 1
-                        print(f"  {create_time:<20s} {action:<15s} {details:<35s} {abs(qty):>6.0f} ${price:>9.2f} ${total_amount:>11,.2f}")
-
-                    print()
-                    print(f"  💰 TOTALS (Last 90 Days):")
-                    print(f"     Premium Received:  ${total_premium_received:>12,.2f}")
-                    print(f"     Premium Paid:      ${total_premium_paid:>12,.2f}")
-                    print(f"     Net Income:        ${total_premium_received - total_premium_paid:>12,.2f}")
-                    print(f"     Total Trades:      {total_trades:>12}")
-
-            break  # First REAL account only
-
-        trd.close()
-
+    if not opt_rows:
+        print(f"  ⚠️  No filled option orders found{f' for {flt}' if flt else ''}")
         print()
         print("  💡 Usage: --orders AMD (filter by ticker) | --orders (show all)")
+        print()
+        return
 
-    except Exception as e:
-        print(f"  ❌ Error fetching order history: {e}")
-        import traceback
-        traceback.print_exc()
+    print(f"  Found {len(opt_rows)} filled orders:")
+    print()
+    print(f"  {'Date':<12s} {'Action':<15s} {'Details':<35s} {'Qty':>6s} {'Price':>10s} {'Total $':>12s}")
+    print(f"  {'-'*12} {'-'*15} {'-'*35} {'-'*6} {'-'*10} {'-'*12}")
 
+    for r in opt_rows:
+        action = "💰 SOLD" if r.action == 'SOLD' else "🔴 BOUGHT" if r.action == 'BOUGHT' else f"❓ {r.side}"
+        kind = "PUT" if r.opt_type == 'P' else "CALL"
+        details = f"{r.ticker} {kind} ${r.strike:.0f} {r.expiry}"
+        print(f"  {r.date:<12s} {action:<15s} {details:<35s} {r.qty:>6.0f} ${r.price:>9.2f} ${abs(r.amount):>11,.2f}")
+
+    print()
+    print(f"  💰 TOTALS (Last 90 Days):")
+    print(f"     Premium Received:  ${summary.premium_collected:>12,.2f}")
+    print(f"     Premium Paid:      ${summary.premium_paid:>12,.2f}")
+    print(f"     Net Income:        ${summary.net_option_income:>12,.2f}")
+    print(f"     Total Trades:      {summary.filled_order_count:>12}")
+    print()
+    print("  💡 Usage: --orders AMD (filter by ticker) | --orders (show all)")
     print()
 
 
@@ -715,23 +630,60 @@ def _print_do_not_wheel():
 # THESIS VALIDATION  (deep checks need yfinance; skipped under --no-external)
 # ════════════════════════════════════════════════════════════════
 
+def _thesis_targets(pf) -> dict:
+    """Build {ticker: source_label} for thesis validation.
+
+    Unifies stocks + option underlyings + watchlist so every name the engine
+    cares about is thesis-checked (per the TO-DO: watchlist + options + stocks).
+    Each ticker validated once; precedence: stock > option > watchlist.
+    """
+    targets: dict[str, str] = {}
+    for t in pf.option_tickers:
+        targets[t] = 'option'
+    for t in pf.stocks:
+        targets[t] = 'stock'        # stock takes precedence over option
+    try:
+        for t in get_config().default_watchlist:
+            t = str(t).upper().replace('US.', '')
+            targets.setdefault(t, 'watchlist')
+    except Exception:
+        pass
+    return targets
+
+
 def _print_thesis(pf, yf_client) -> dict:
-    """Validate the investment thesis for every holding. Returns {ticker: report}.
-    Auto-adds BROKEN tickers to the Do-Not-Wheel list (6 months)."""
+    """Validate the investment thesis for stocks + option underlyings + watchlist.
+
+    Returns {ticker: report}. Auto-adds BROKEN tickers to the Do-Not-Wheel list
+    (6 months) and auto-REMOVES a listed ticker when its thesis recovers to the
+    configured recovery status (default INTACT), so the list no longer waits out
+    the full 6-month expiry for a stock that has healed.
+    """
+    targets = _thesis_targets(pf)
     print(f"{'='*90}")
-    print(f"  🔍 THESIS VALIDATION ({len(pf.stocks)} holdings)")
+    print(f"  🔍 THESIS VALIDATION ({len(targets)} tickers: "
+          f"{sum(1 for s in targets.values() if s == 'stock')} stock, "
+          f"{sum(1 for s in targets.values() if s == 'option')} option, "
+          f"{sum(1 for s in targets.values() if s == 'watchlist')} watch)")
     print(f"{'='*90}")
     if yf_client is None:
         print("  ⚠️  Skipped (--no-external): deep thesis checks require yfinance.\n")
         return {}
-    if not pf.stocks:
-        print("  (no stock holdings)\n")
+    if not targets:
+        print("  (no tickers to validate)\n")
         return {}
+
+    cfg = get_config()
+    recovery_status = cfg.thesis_validation('recovery_status_for_removal', 'INTACT')
+    recovery_ok = {ThesisStatus.INTACT}
+    if str(recovery_status).upper() == 'DAMAGED':
+        recovery_ok = {ThesisStatus.INTACT, ThesisStatus.DAMAGED}
 
     results = {}
     dnl = DoNotWheelList()
     with MoomooClient() as moomoo:
-        for ticker in sorted(pf.stocks):
+        for ticker in sorted(targets):
+            source = targets[ticker]
             try:
                 snap = moomoo.get_stock_snapshot(f'US.{ticker}')
                 report = validate_investment_thesis(
@@ -741,7 +693,7 @@ def _print_thesis(pf, yf_client) -> dict:
                 status = report.status
                 emoji = ("✅" if status == ThesisStatus.INTACT
                          else "⚠️" if status == ThesisStatus.DAMAGED else "🚨")
-                print(f"  {emoji} {ticker:<6s} {status.value}")
+                print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}")
                 for chk in report.checks:
                     if chk.severity == "CRITICAL":
                         print(f"      🚨 {chk.message}")
@@ -755,9 +707,13 @@ def _print_thesis(pf, yf_client) -> dict:
                                         if c.severity == "CRITICAL") or "Thesis broken")
                     dnl.add(ticker, months=6, reason=reason)
                     print(f"      🔧 Added {ticker} to Do-Not-Wheel list (6 months)")
+                # Auto-remove a listed ticker whose thesis has recovered.
+                elif status in recovery_ok and dnl.is_excluded(ticker):
+                    dnl.remove(ticker)
+                    print(f"      ✅ Removed {ticker} from Do-Not-Wheel — thesis recovered")
             except Exception as e:
                 log.warning(f"Thesis validation error for {ticker}: {e}")
-                print(f"  ⚠️  {ticker}: thesis validation error — {e}")
+                print(f"  ⚠️  {ticker:<6s} [{source:<7s}] thesis validation error — {e}")
 
     intact = sum(1 for r in results.values() if r.status == ThesisStatus.INTACT)
     damaged = sum(1 for r in results.values() if r.status == ThesisStatus.DAMAGED)

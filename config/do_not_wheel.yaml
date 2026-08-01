@@ -2,16 +2,15 @@ AMD:
   added_date: '2026-08-01'
   expiration_date: '2027-02-01'
   months: 6
-  reason: P/E ratio extremely high (184.0) - speculative valuation
+  reason: P/E ratio extremely high (179.7) - speculative valuation
 PLTR:
   added_date: '2026-08-01'
   expiration_date: '2027-02-01'
   months: 6
-  reason: P/E ratio extremely high (193.5) - speculative valuation; Stock down 41.3%
+  reason: P/E ratio extremely high (195.3) - speculative valuation; Stock down 40.7%
     from 52-week highs - major decline
 TSLA:
   added_date: '2026-08-01'
   expiration_date: '2027-02-01'
   months: 6
-  reason: P/E ratio extremely high (285.0) - speculative valuation; Price 25.2% below
-    200-day SMA - major breakdown
+  reason: P/E ratio extremely high (288.2) - speculative valuation
