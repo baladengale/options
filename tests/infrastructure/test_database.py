@@ -271,7 +271,7 @@ class TestDatabasePerformance:
                 cursor.execute("""
                     INSERT INTO holdings (ticker, quantity, cost_basis, current_price, sector)
                     VALUES (?, ?, ?, ?, ?)
-                ""', (f'TEST{i}', 100 + i, 150.0 + i, 155.0 + i, 'Technology'))
+                """, (f'TEST{i}', 100 + i, 150.0 + i, 155.0 + i, 'Technology'))
 
             conn.commit()
 

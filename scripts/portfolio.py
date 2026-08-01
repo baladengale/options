@@ -581,13 +581,12 @@ def _compute_staged_guardrails(pf, orders, nlv):
         ticker: {'market_value': pos.get('mv', 0), 'sector': SECTOR_MAP.get(ticker, 'Other')}
         for ticker, pos in pf.stocks.items()
     }
-    filled_orders = sum(1 for o in orders if o.get('status') in ('FILLED_ALL', 'FILLED_PART'))
     checker = StagedGuardrails(
         net_liquidation=nlv,
         cash=pf.funds.liquid,
         buying_power=pf.funds.buying_power,
         open_positions=len(pf.options),
-        monthly_orders=filled_orders,
+        monthly_orders=_filled_orders_this_month(orders),
         csp_liability=pf.csp_liability,
     )
     violations = checker.check_all_guardrails(positions_dict)
@@ -603,6 +602,18 @@ def _determine_recovery_stage(pf, nlv) -> str:
     if cash_buffer_pct < 0.15 or csp_deployment_pct > 0.35:
         return "TARGET"
     return "COMFORT"
+
+
+def _filled_orders_this_month(orders) -> int:
+    """Filled orders in the current calendar month.
+
+    The order history spans years; feeding the all-time count into the monthly
+    guardrail produces a false BLOCK. This buckets by the order's fill date.
+    """
+    ym = date.today().strftime('%Y-%m')
+    return sum(1 for o in orders
+               if o.get('status') in ('FILLED_ALL', 'FILLED_PART')
+               and str(o.get('date', '') or '').startswith(ym))
 
 
 def _print_guardrails(pf, orders, nlv):
@@ -795,10 +806,10 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage, t
             recs.append(("MEDIUM", f"Reduce V concentration ({v_pct:.0%}) via CC assignment",
                          "Sell CCs on V; let assignment convert shares to cash for redeployment."))
 
-    filled = sum(1 for o in orders if o.get('status') in ('FILLED_ALL', 'FILLED_PART'))
-    if filled > 10:
+    monthly = _filled_orders_this_month(orders)
+    if monthly > 10:
         recs.append(("HIGH", "Reduce trading frequency to a systematic Wheel",
-                     f"{filled} filled orders in window — target 8–10/month. "
+                     f"{monthly} filled orders this month — target 8–10/month. "
                      f"Use weekly reviews only; let positions expire naturally."))
 
     if not trading_allowed:

@@ -180,7 +180,7 @@ options/
 │   ├── test_portfolio_loader.py       # Portfolio loader tests
 │   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
 │   ├── test_holdings_exit.py          # Exit framework tests
-│   └── ...                            # 470 tests total (468 pass, 2 moomoo-dependent)
+│   └── ...                            # 553 tests (490 offline unit + integration/infrastructure)
 ├── docs/                              # Research docs + implementation guides
 ├── .claude/skills/                    # Claude Code skills (oie, oie-paper)
 ├── CLAUDE.md                          # AI coding instructions
@@ -262,6 +262,7 @@ source .venv/bin/activate && python3 scripts/portfolio.py --no-external   # Skip
 | Section | Flag | Description |
 |---------|------|-------------|
 | Account Funds | (always) | Cash, fund assets, buying power, margin, NLV, CSP liability |
+| ↳ Buying power | | moomoo's margin-inclusive `power` (cash + securities); falls back to cash-only `usd_net_cash_power` when unavailable. HKD-denominated `power` is converted to USD |
 | Stock Positions | `--pnl` / default | Every holding with cost basis, market value, P&L, P&L% |
 | Option Positions | `--pnl` / default | Every contract with DTE, strike, cost, current P&L |
 | All-Time Income | `--pnl` / default | Premium collected vs buybacks, monthly breakdown |
@@ -1500,6 +1501,8 @@ stop_loss:
 | Open positions | ≤ 8 total | 🟡 WARN |
 | Watchlist diversification | ≥ 3 sectors | 🟡 WARN |
 
+> **Monthly order count is bucketed by fill date.** Only orders filled in the *current calendar month* count toward the staged-recovery order limit (10 target / 20 emergency). The order history spans years; counting all-time fills would permanently BLOCK any mature account. See `_filled_orders_this_month` in `scripts/portfolio.py`.
+
 ### Layer 3: Ticker Risk Gates + Scoring
 
 14 hard constraints + VRP, GEX, concentration, earnings gates. 5-dimension ticker score + contract penalty. See [GOAL.md](GOAL.md) for pre-trade checklist.
@@ -1625,27 +1628,41 @@ tail -50 logs/options.log
 ## Tests
 
 ```bash
-pytest tests/ -v --tb=short                       # 468 pass, 2 moomoo-dependent skipped
-pytest tests/ --cov=src --cov-report=term         # Coverage report
+# Unit suite — deterministic, no network needed (CI runs exactly this):
+pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
+              --ignore=tests/performance -m "not slow"          # 490 passed
+
+# With coverage:
+pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
+              --ignore=tests/performance -m "not slow" --cov=src --cov-report=term
+
+# Everything (incl. integration/infrastructure). Some tests in
+# tests/integration + tests/infrastructure make live moomoo/yfinance calls
+# and need OpenD + network — run them with the services up, or -m "not slow".
+pytest tests/                                                    # 553 collected
 ```
 
-**Test breakdown** (16 files, ~470 tests):
+`pytest-timeout` is required (declared in `requirements-dev.txt`) — `pytest.ini`
+sets a 300s per-test cap and registers the `timeout` marker.
+
+**Unit test breakdown** (~490 tests, all offline):
 
 | File | Tests | Coverage |
 |------|:-----:|----------|
 | `test_thesis_validation.py` | 52 | Thesis checks, guardrails, decision messages |
 | `test_constraints.py` | 58 | Strategy type, coverage, earnings, DTE, delta, sizing, IV, RoC, correlation, spread |
-| `test_trend.py` | 50+ | RSI, MACD, SMA, ADX, trend composite, signal generator |
-| `test_scoring.py` | 40+ | Fundamental, trend, ADX, options chain, wheel score, correlation, RoC |
+| `test_trend.py` | 54 | RSI, MACD, SMA, ADX, trend composite, signal generator |
+| `test_scoring.py` | 48 | Fundamental, trend, ADX, options chain, wheel score, correlation, RoC |
+| `test_holdings_exit.py` | 37 | Drawdown, SMA slope, backstop, dead zone, recovery math, roll discipline |
+| `test_signals.py` | 31 | Signal enum, CSP/CC decision matrix, confidence |
 | `test_sentiment.py` | 25 | IV sentiment, volume/OI, price action, composite, strategy rules |
-| `test_signals.py` | 25 | Signal enum, CSP/CC decision matrix, confidence |
-| `test_holdings_exit.py` | 35 | Drawdown, SMA slope, backstop, dead zone, recovery math, roll discipline |
-| `test_oie_db.py` | 26 | Paper DB: schema, seed, open/close/expire/assign, snapshots, audit |
-| `test_oie_simulation.py` | 20 | Full lifecycle: CSP, CC, multi-cycle, audit trail, reset |
-| `test_screener_scoring.py` | 22 | Ticker score, contract penalty, reason bands, stars |
+| `test_oie_db.py` | 27 | Paper DB: schema, seed, open/close/expire/assign, snapshots, audit |
+| `test_screener_scoring.py` | 27 | Ticker score, contract penalty, reason bands, stars |
+| `test_oie_simulation.py` | 19 | Full lifecycle: CSP, CC, multi-cycle, audit trail, reset |
+| `test_portfolio_loader.py` | 40 | Option code parsing, funds (`_finite`/`_buying_power`), positions, orders |
+| `test_risk.py` | 26 | CC coverage, CSP coverage, collar check, assignment, portfolio risk |
 | `test_holding_score.py` | 16 | Option decisions, stop tiers, delta gates, CC hunting |
-| `test_portfolio_loader.py` | 24 | Option code parsing, funds, positions, orders |
+| `test_screener_score.py` | 7 | Shim re-exports, RoC, score stars, reason bands |
+| `test_portfolio_monthly_guardrail.py` | 6 | Monthly order bucketing (`_filled_orders_this_month`) |
 | `test_portfolio_summary.py` | 8 | Income, sector breakdown, unrealized P&L |
-| `test_overlap.py` | 8 | Straddle/strangle detection, stacked calls, net scenarios |
-| `test_risk.py` | 30 | CC coverage, CSP coverage, collar check, assignment, portfolio risk |
-| `test_screener_score.py` | 6 | Shim re-exports, RoC, score stars, reason bands |
+| `test_overlap.py` | 9 | Straddle/strangle detection, stacked calls, net scenarios |

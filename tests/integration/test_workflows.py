@@ -209,7 +209,7 @@ class TestThesisValidationWorkflow:
         """Thesis validation integrates with guardrails"""
         try:
             from src.analysis.thesis_validator import quick_thesis_check
-                from src.guardrails.limits import GuardrailChecker
+            from src.guardrails.limits import GuardrailChecker
             from src.data.models import StockSnapshot
 
             # Create test stock
@@ -360,7 +360,7 @@ class TestPortfolioAnalysisWorkflow:
     def test_complete_analysis_workflow(self):
         """Complete portfolio analysis from data to recommendations"""
         try:
-            # This would test the full comprehensive_analysis.py workflow
+            # This would test the full portfolio.py sweep (formerly comprehensive_analysis.py)
             # But we'll test the components separately to avoid API dependencies
 
             from src.portfolio.summary import generate_portfolio_summary

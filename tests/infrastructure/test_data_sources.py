@@ -221,7 +221,7 @@ class TestDataFreshness:
         # Stale data (10 minutes old)
         stale_timestamp = now - timedelta(minutes=10)
         stale_age = (now - stale_timestamp).total_seconds()
-        assert stale_age > 300, "Should identify as stale (>5 minutes)")
+        assert stale_age > 300, "Should identify as stale (>5 minutes)"
 
 
 class TestErrorHandling:

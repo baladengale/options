@@ -1,10 +1,42 @@
 
-## Goals:
-1. Overall idea is to make this framework automatic so we execute but it screen through portfolio and watchlist for current posistions and available opportunities and provide signals to take decision. At the end those decisions are executed in paper trade with oie framework but human in the loop will review and execute those after through analysis. So when decision is provided for execution, better explain with thesis and reasoning behind it.
-2. Goals is to go for above average return not too high by risking Capital, Research still favors for buy and hold investores than very regular traders...But This framework and overall experince we will go through and experience it. 
-3. Overall thinking and execution should not take more than 15 minutes per day during active market days.
-4. Capital preservation is the most important aspect of trading or this framework when it provides signals for action
-5. Overall we will start with Wheel strategies but learn and understand different strategies can be applied during different time in the market
-6. Avoid temptation or decisions without any thesis, Avoid Grid to earn more premium.. Its important to preserve capital.
-7. Loss management or decision to close the posistion when market goes against your bet is the most important and thought through as markets often volatile and too quick decision as well often not correct.
-8. 
+## In portfolio.py the BP value is wrong
+💰 Liquid: $21,458 (cash $1,784 + fund $19,673) | BP: $21,051 | 13 stocks, 10 options
+
+## check if these THESIS validation is really required or not? Its blocking few good companies which I trust..
+  🚨 AMD    THESIS_BROKEN
+      🚨 P/E ratio extremely high (184.0) - speculative valuation
+      → 🚨 THESIS BROKEN — Exit Wheel on AMD
+Reason: P/E ratio extremely high (184.0) - speculative valuation
+Action: Close position, add to Do-Not-Wheel list for 6 months
+      🔧 Added AMD to Do-Not-Wheel list (6 months)
+  ⚠️ AVGO   TECHNICAL_DAMAGE
+      ⚠️  P/E ratio elevated (80.7) - monitor fundamentals
+      → ⚠️  THESIS DAMAGED — Monitor AVGO
+Concerns: P/E ratio elevated (80.7) - monitor fundamentals
+Action: Weekly monitoring, re-evaluate in 7 days
+
+  🚨 PLTR   THESIS_BROKEN
+      🚨 P/E ratio extremely high (193.5) - speculative valuation
+      ⚠️  Price 20.3% below 200-day SMA - technical damage
+      🚨 Stock down 41.3% from 52-week highs - major decline
+      → 🚨 THESIS BROKEN — Exit Wheel on PLTR
+Reason: P/E ratio extremely high (193.5) - speculative valuation; Stock down 41.3% from 52-week highs - major decline
+Action: Close position, add to Do-Not-Wheel list for 6 months
+      🔧 Added PLTR to Do-Not-Wheel list (6 months)
+  ⚠️ SKHY   TECHNICAL_DAMAGE
+      ⚠️  Stock down 25.7% from 52-week highs - concerning
+      → ⚠️  THESIS DAMAGED — Monitor SKHY
+Concerns: Stock down 25.7% from 52-week highs - concerning
+Action: Weekly monitoring, re-evaluate in 7 days
+  🚨 TSLA   THESIS_BROKEN
+      🚨 P/E ratio extremely high (285.0) - speculative valuation
+      🚨 Price 25.2% below 200-day SMA - major breakdown
+      ⚠️  Stock down 38.3% from 52-week highs - concerning
+      → 🚨 THESIS BROKEN — Exit Wheel on TSLA
+Reason: P/E ratio extremely high (285.0) - speculative valuation; Price 25.2% below 200-day SMA - major breakdown
+Action: Close position, add to Do-Not-Wheel list for 6 months
+      🔧 Added TSLA to Do-Not-Wheel list (6 months)
+
+## How to logically use capital as during wheel we might end up in cash without underline stocks as option might not get assigned.... if we hold the stock which is good as I enjoy stock appreciation.. but how to avoid keep cash without really using it
+
+## How can we use capital efficiently and without risk ? I have 20k cash but not getting used at all.. as my options are 30 days far and not getting assigned..

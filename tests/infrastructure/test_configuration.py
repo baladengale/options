@@ -295,30 +295,26 @@ class TestConfigurationHotReload:
     def test_config_module_caching(self):
         """Config module handles caching correctly"""
         try:
-            # Import config
             from src import config
 
-            # Get config first time
-            rules1 = config.rules
-
-            # Get config second time (should be cached)
-            rules2 = config.rules
-
-            # Should be same object (cached)
-            assert rules1 is rules2 or rules1 == rules2, "Config should be cached"
+            # get_config() caches after first load — same object on repeat calls
+            cfg1 = config.get_config()
+            cfg2 = config.get_config()
+            assert cfg1 is cfg2, "get_config() should return the cached Config instance"
 
         except ImportError:
             pytest.skip("Config module not available")
 
     def test_config_reloading_capability(self):
         """System can reload configuration when needed"""
-        # This would test config reload functionality
-        # For now, just verify the capability exists
         try:
             from src import config
-            # Check if reload method exists
-            assert hasattr(config, 'reload') or hasattr(config, 'load_config'), \
-                "Config module should have reload capability"
+            # reload_config() resets the cache and returns a fresh Config
+            assert hasattr(config, 'reload_config'), \
+                "Config module should expose reload_config()"
+            before = config.get_config()
+            after = config.reload_config()
+            assert isinstance(after, type(before)), "reload_config() returns a Config"
         except ImportError:
             pytest.skip("Config module not available")
 

@@ -13,6 +13,34 @@ from src.scoring.holding_score import (
 TODAY = date.today()
 
 
+class _NoDataMoomoo:
+    """Stand-in for MoomooClient so the heavy-loss thesis path stays offline.
+
+    `_score_option`'s catch-all instantiates MoomooClient() and asks for a
+    snapshot; raising here routes it to the deterministic UNDERWATER fallback
+    (the `except` branch) instead of blocking on the network when OpenD isn't
+    running.
+    """
+    def get_stock_snapshot(self, ticker):
+        raise RuntimeError("offline test — no moomoo data")
+
+    def close(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _stub_moomoo(monkeypatch):
+    """Keep every test in this module offline and deterministic.
+
+    The heavy-loss catch-all in _score_option does a local
+    `from src.data.moomoo_client import MoomooClient`, so we patch the symbol at
+    its source. The stub's get_stock_snapshot raises, routing the thesis check
+    to its deterministic UNDERWATER fallback instead of blocking on the network.
+    """
+    import src.data.moomoo_client as mc
+    monkeypatch.setattr(mc, 'MoomooClient', lambda *a, **kw: _NoDataMoomoo())
+
+
 def _opt(dte=40, delta=-0.20, bid=5.0):
     """Build a lightweight _OptionCurrent with the fields _score_option reads."""
     return _OptionCurrent({

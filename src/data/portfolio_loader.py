@@ -18,6 +18,7 @@ Usage:
 Read-only — never submits orders.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -39,7 +40,7 @@ HKD_TO_USD = 7.8
 class Funds:
     """Account funds (USD-normalized)."""
     cash: float = 0.0                 # us_cash
-    buying_power: float = 0.0         # usd_net_cash_power
+    buying_power: float = 0.0         # moomoo `power` (max buying power, margin-inclusive)
     fund: float = 0.0                 # fund_assets (USD)
     total_assets: float = 0.0
     total_liabilities: float = 0.0
@@ -119,6 +120,29 @@ def _normalize_fund(raw: float, currency: str) -> float:
     return raw or 0.0
 
 
+def _finite(v) -> float:
+    """Coerce a moomoo accinfo scalar to float; None/NaN → 0.0."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if math.isnan(x) else x
+
+
+def _buying_power(f, currency: str) -> float:
+    """Max buying power (USD).
+
+    Prefers moomoo's margin-inclusive ``power`` (purchasing power against cash +
+    securities) over ``usd_net_cash_power`` (cash-only), which understates the
+    real buying power for an account holding stock. HKD account-currency power
+    is converted to USD.
+    """
+    power = _finite(f.get('power'))
+    if power > 0:
+        return power / HKD_TO_USD if currency == 'HKD' else power
+    return _finite(f.get('usd_net_cash_power'))
+
+
 def fetch_funds(trd) -> Funds:
     """Read funds for the first REAL account found. Pass an open OpenSecTradeContext."""
     ret, acc_list = trd.get_acc_list()
@@ -134,8 +158,8 @@ def fetch_funds(trd) -> Funds:
         f = funds.iloc[0]
         currency = str(f.get('currency', ''))
         return Funds(
-            cash=float(f.get('us_cash', 0) or 0),
-            buying_power=float(f.get('usd_net_cash_power', 0) or 0),
+            cash=_finite(f.get('us_cash')),
+            buying_power=_buying_power(f, currency),
             fund=_normalize_fund(float(f.get('fund_assets', 0) or 0), currency),
             total_assets=float(f.get('total_assets', 0) or 0),
             total_liabilities=float(f.get('total_liabilities', 0) or 0),
