@@ -10,7 +10,8 @@ Public:
     _score_holding(snap, ticker, yf_client, regime, regime_mult) -> float
     _find_best_cc(moomoo, ticker, snap, shares, cost_basis, yf_client,
                   regime, regime_mult, allow_below_basis=False) -> Optional[dict]
-    _score_option(pos, current, profit_captured, pl, today, yf_client) -> (score, decision)
+    _score_option(pos, current, profit_captured, pl, today, yf_client, ...) -> (score, decision, profit_decision)
+    _ticker_frequency_ok(pos, today, orders) -> (ok, note)
     _OptionCurrent / _parse_snapshot_row — lightweight option view from a raw API row
 """
 
@@ -123,14 +124,44 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
     return best
 
 
+def _ticker_frequency_ok(pos: dict, today: date, orders: list) -> tuple[bool, str]:
+    """Check per-ticker close frequency cap (spec §9).
+
+    Returns (ok, note). If ok=False, the caller should suppress a profit-taking
+    CLOSE but still allow defensive closes (delta gate, premium stop, MANAGE_DTE).
+    """
+    cfg = get_config()
+    max_closes = cfg.guardrail_limits('max_closes_per_ticker_per_month', 2)
+    ticker = pos.get('ticker', '')
+    ym = today.strftime('%Y-%m')
+
+    closes_this_month = sum(
+        1 for o in (orders or [])
+        if o.get('status') in ('FILLED_ALL', 'FILLED_PART')
+        and str(o.get('date', '') or '').startswith(ym)
+        and o.get('code', '').upper().startswith(ticker.upper())
+        and o.get('side', '').upper() in ('BUY', 'BUY_BACK')
+    )
+
+    if closes_this_month >= max_closes:
+        return False, f'{closes_this_month}/{max_closes} {ticker} closes this month'
+    return True, ''
+
+
 def _score_option(pos: dict, current, profit_captured: float, pl: float,
-                  today: date, yf_client, trend_ctx=None, capital_scarcity=None) -> tuple[float, str]:
-    """Score an option position 1-10. Returns (score, decision).
+                  today: date, yf_client, trend_ctx=None, capital_scarcity=None,
+                  orders=None) -> tuple[float, str, object]:
+    """Score an option position 1-10. Returns (score, decision, profit_decision).
 
     Profit booking is delegated to src.analysis.profit_management.decide_profit_target
     (trend-modulated per specs/profit-loss-management-spec.md). With trend_ctx=None
     it falls back to the flat 50%/70% close behavior (backward compatible).
     Loss-side logic (stop tiers, delta gates, thesis catch-all) runs unchanged.
+
+    The OTM-only close gate (spec §6) overrides a profit-taking CLOSE when the
+    position is far OTM (|Δ| < close_if_delta_above) with ample DTE (> close_if_dte_below).
+    The third return element is the ProfitDecision from decide_profit_target, threaded
+    out so downstream consumers can switch on its ACTION_* constants.
     """
     score = 5.0
     decision = 'HOLD'
@@ -141,11 +172,41 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     # Profit captured — trend-modulated target (spec §4.2)
     from src.analysis.profit_management import decide_profit_target, ProfitDecision
     pd = decide_profit_target(strategy, profit_captured, dte, delta, trend_ctx, capital_scarcity)
-    if pd.action == ProfitDecision.ACTION_CLOSE:
-        # Deeper profit past target = more "decided" (preserves the old 70%→-2.0
-        # signal that a deeply-profitable close is stronger than a base-target one).
-        score -= 2.0 if profit_captured >= 70 else 1.5
-        decision = f'✅ CLOSE ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% target)'
+
+    # ── OTM-only close gate (spec §6) ──
+    # Do not auto-close a profitable position when it is far OTM with ample DTE.
+    # Let theta keep working. This only overrides ACTION_CLOSE; MANAGE_DTE, ROLLs,
+    # and loss-side stops fire regardless.
+    base_target = float(get_config().profit_take_csp('base_pct', 50) if strategy == 'CSP'
+                         else get_config().profit_take_cc('base_pct', 50))
+    otm_gate_delta = get_config().profit_take('close_if_delta_above', 0.30)
+    otm_gate_dte = get_config().profit_take('close_if_dte_below', 21)
+
+    otm_override = (
+        pd.action == ProfitDecision.ACTION_CLOSE
+        and profit_captured >= base_target
+        and delta < otm_gate_delta
+        and dte > otm_gate_dte
+    )
+
+    if pd.action == ProfitDecision.ACTION_CLOSE and not otm_override:
+        # Per-ticker frequency cap (spec §9) — suppress profit-taking CLOSE if
+        # this ticker already hit the monthly close limit. Defensive closes
+        # (delta gate, premium stop, MANAGE_DTE) are applied by later layers and
+        # are NOT suppressed by this check.
+        freq_ok, freq_note = _ticker_frequency_ok(pos, today, orders or [])
+        if not freq_ok:
+            decision = (f'👍 HOLD FREQ-CAPPED ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% target, '
+                        f'{freq_note})')
+        else:
+            # Target-aware scoring: deeper past the engine's target = more "decided"
+            depth = profit_captured - pd.target_pct
+            score -= 2.0 if depth >= 20 else (1.5 if depth >= 0 else 1.0)
+            decision = f'✅ CLOSE ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% target)'
+    elif otm_override:
+        # Engine said CLOSE but OTM gate overrides to HOLD — theta still working.
+        decision = (f'👍 HOLD OTM GATE ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% target, '
+                    f'|Δ|={delta:.2f} < {otm_gate_delta}, DTE={dte} > {otm_gate_dte})')
     elif pd.action == ProfitDecision.ACTION_MANAGE_DTE:
         score -= 1.5
         decision = '📅 MANAGE DTE — close/roll/assign (21-DTE floor)'
@@ -186,8 +247,14 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             score -= 0.5
             decision = '📋 At Management Point — Weekly review, no action needed'
 
-    # Layer 2: Delta gates (from config)
+    # Layer 2: Delta gates (from config, DTE-interaction per §7.2)
+    # Inside the gamma zone (DTE ≤ 21) the decision delta relaxes to 0.40
+    # because gamma is ramping and there's less time to recover.
     cfg = get_config()
+    _GAMMA_ZONE_DECISION_DELTA = 0.40  # fallback inside DTE ≤ 21
+    eff_csp_decision = _GAMMA_ZONE_DECISION_DELTA if dte <= 21 else cfg.stop_delta_csp_decision
+    eff_cc_warn = _GAMMA_ZONE_DECISION_DELTA if dte <= 21 else cfg.stop_delta_cc_warn
+
     if strategy == 'CSP' and delta >= cfg.stop_delta_csp_critical:
         score += 2.0
         decision = '🛑 |Δ|≥0.60 — roll / take assignment / exit'
@@ -198,14 +265,14 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
         score += 1.0
         if 'CLOSE' not in decision and 'STOP' not in decision:
             decision = '📈 ITM — Assignment probable, expected outcome'
-    elif strategy == 'CSP' and delta >= cfg.stop_delta_csp_decision:
+    elif strategy == 'CSP' and delta >= eff_csp_decision:
         score += 0.5
-        if decision == 'HOLD' or 'Management Point' in decision:
-            decision = '🔶 Δ≥0.40 decision time — plan roll/assign/exit'
-    elif strategy == 'CC' and delta >= cfg.stop_delta_cc_warn:
+        if decision == 'HOLD' or 'Management Point' in decision or 'OTM GATE' in decision:
+            decision = f'🔶 Δ≥{eff_csp_decision:.2f} decision time — plan roll/assign/exit'
+    elif strategy == 'CC' and delta >= eff_cc_warn:
         score += 0.5
-        if decision == 'HOLD':
-            decision = '⚠️  Δ≥0.40 — monitor closely'
+        if decision == 'HOLD' or 'OTM GATE' in decision:
+            decision = f'⚠️  Δ≥{eff_cc_warn:.2f} — monitor closely'
 
     # Layer 1: Premium multiple stop-loss (DTE-adjusted)
     # profit_captured is a percentage: positive = profit, negative = loss
@@ -276,7 +343,7 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             if 'CLOSE' not in decision:
                 decision = '🔴 UNDERWATER — Monitor thesis, not price'
 
-    return max(1.0, min(10.0, score)), decision
+    return max(1.0, min(10.0, score)), decision, pd
 
 
 class _OptionCurrent:

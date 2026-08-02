@@ -156,9 +156,9 @@ stop_loss:
   delta:
     csp_critical: 0.60   # CSP |Δ| > 0.60 → too directional, cut it
     csp_itm: 0.50        # CSP |Δ| ≥ 0.50 → deep ITM, assignment imminent
-    csp_decision: 0.40   # CSP |Δ| ≥ 0.40 → "decision time": plan roll / take assignment / exit
+    csp_decision: 0.50   # CSP |Δ| ≥ 0.50 → "decision time": plan roll / take assignment / exit (was 0.40, §7.2)
     cc_critical: 0.50    # CC Δ > 0.50 → prepare for assignment
-    cc_warn: 0.40        # CC Δ > 0.40 → monitor closely
+    cc_warn: 0.50        # CC Δ > 0.50 → monitor closely (was 0.40, §7.2)
 
 # ── Rolling Discipline (UNVALIDATED — backtest pending, playbook §3) ──
 rolling:
@@ -223,6 +223,10 @@ profit_take:
   loss_alert_trend_overlay:
     trend_composite_hard_stop_min: 40  # trend < 40 at 2× alert → treat as hard stop
     max_extra_roll_attempts: 1        # trend ≥ 40 → one roll attempt, then forced decision
+  # OTM-only close gate (spec §6) — only auto-close a PROFITABLE position
+  # when it is near money OR near expiry; otherwise let theta work.
+  close_if_delta_above: 0.30     # |Δ| >= this OR ...
+  close_if_dte_below:   21       # DTE <= this ... → close eligible; else HOLD
 
 # ── Watchlist (default fallback) ──
 watchlist:
@@ -339,5 +343,8 @@ guardrail_limits:
   # Complexity limits
   max_total_positions_emergency: 10  # emergency: accept current level
   max_total_positions_target: 8      # target: manageable
-  max_monthly_orders_emergency: 20   # emergency: progress from 40
+  max_monthly_orders_emergency: 15   # emergency: tightened from 20 (spec §10)
   max_monthly_orders_target: 10      # target: true Wheel frequency
+  # Per-ticker frequency cap (spec §9) — kill single-ticker churn
+  max_closes_per_ticker_per_month: 2
+  same_strike_reopen_cooldown_days: 14

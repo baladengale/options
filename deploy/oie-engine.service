@@ -2,12 +2,22 @@
 Description=Options Income Engine (OIE) — Paper Trading
 After=network.target
 
+#
+# ── LINUX ONLY (systemd) ──────────────────────────────────────
+# On macOS use the LaunchAgent instead:
+#   cp deploy/com.oie.engine.plist ~/Library/LaunchAgents/
+#   launchctl load ~/Library/LaunchAgents/com.oie.engine.plist
+#   launchctl list | grep oie
+# The macOS wrapper (deploy/run_oie.sh) handles OpenD auto-start
+# and a 10-min cold-boot delay automatically.
+# ──────────────────────────────────────────────────────────────
+
 [Service]
 Type=simple
 User=bala
 WorkingDirectory=/data/home/bala/projects/options
 Environment=OPTIONS_HOME=/data/home/bala/projects/options
-ExecStart=/usr/bin/python3 scripts/oie_engine.py run --interval 30 --skip-closed
+ExecStart=/usr/bin/python3 scripts/oie_engine.py run --interval 60 --skip-closed
 Restart=always
 RestartSec=60
 StandardOutput=append:/data/home/bala/projects/options/logs/oie.log

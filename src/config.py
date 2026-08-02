@@ -353,6 +353,14 @@ class Config:
         return self._data['watchlist']['diversify']
 
     # ═══════════════════════════════════════════════════════════
+    # GUARDRAIL LIMITS
+    # ═══════════════════════════════════════════════════════════
+
+    def guardrail_limits(self, key: str, default=None):
+        """Get guardrail operational limit. e.g., guardrail_limits('max_monthly_orders_emergency') → 15"""
+        return self._data.get('guardrail_limits', {}).get(key, default)
+
+    # ═══════════════════════════════════════════════════════════
     # CONVENIENCE
     # ═══════════════════════════════════════════════════════════
 

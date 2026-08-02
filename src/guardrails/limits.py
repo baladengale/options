@@ -39,7 +39,7 @@ class PositionLimits:
 
     # Complexity limits: Accept current learning curve
     MAX_TOTAL_POSITIONS_EMERGENCY = 10   # 10 positions - You're at 10, OK
-    MAX_MONTHLY_ORDERS_EMERGENCY = 20    # 20 orders - Down from 30, progress!
+    MAX_MONTHLY_ORDERS_EMERGENCY = 15    # 15 orders - tightened from 20 (spec §10)
 
     # === TARGET LIMITS (Sustainable Wheel - Month 2-3) ===
     # Where you want to be after emergency fixes

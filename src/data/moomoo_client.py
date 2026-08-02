@@ -123,50 +123,61 @@ class MoomooClient:
                     continue
 
                 for _, row in data.iterrows():
-                code = self._s(row, 'code', '')
-                if not code:
-                    continue
-                snap = StockSnapshot(
-                    ticker=code,
-                    name=self._s(row, 'name', ''),
-                    last_price=self._f(row, 'last_price'),
-                    open_price=self._f(row, 'open_price'),
-                    high_price=self._f(row, 'high_price'),
-                    low_price=self._f(row, 'low_price'),
-                    prev_close=self._f(row, 'prev_close_price'),
-                    bid=self._f(row, 'bid_price'),
-                    ask=self._f(row, 'ask_price'),
-                    bid_vol=self._f(row, 'bid_vol'),
-                    ask_vol=self._f(row, 'ask_vol'),
-                    volume=self._i(row, 'volume'),
-                    turnover=self._f(row, 'turnover'),
-                    turnover_rate=self._f(row, 'turnover_rate'),
-                    volume_ratio=self._f(row, 'volume_ratio'),
-                    amplitude=self._f(row, 'amplitude'),
-                    highest_52w=self._f(row, 'highest52weeks_price'),
-                    lowest_52w=self._f(row, 'lowest52weeks_price'),
-                    pe_ratio=self._fn(row, 'pe_ratio'),
-                    pb_ratio=self._fn(row, 'pb_ratio'),
-                    pe_ttm=self._fn(row, 'pe_ttm_ratio'),
-                    earnings_yield=self._fn(row, 'ey_ratio'),
-                    market_cap=self._fn(row, 'total_market_val'),
-                    circulating_market_cap=self._fn(row, 'circular_market_val'),
-                    eps_ttm=self._fn(row, 'earning_per_share'),
-                    net_profit=self._fn(row, 'net_profit'),
-                    net_asset_per_share=self._fn(row, 'net_asset_per_share'),
-                    dividend_ttm=self._fn(row, 'dividend_ttm'),
-                    dividend_yield_ttm=self._fn(row, 'dividend_ratio_ttm'),
-                    dividend_lfy=self._fn(row, 'dividend_lfy'),
-                    issued_shares=self._fn(row, 'issued_shares'),
-                    short_sell_rate=self._fn(row, 'short_sell_rate'),
-                    short_available=self._fn(row, 'short_available_volume'),
-                    suspension=self._s(row, 'suspension', '') == 'True' or self._s(row, 'suspension', '') is True,
-                    lot_size=self._i(row, 'lot_size', 100),
-                    update_time=self._dt(row, 'update_time'),
-                )
-                # Compute derived fields
-                self._compute_derived_stock(snap)
-                results.append(snap)
+                    code = self._s(row, 'code', '')
+                    if not code:
+                        continue
+                    snap = StockSnapshot(
+                        ticker=code,
+                        name=self._s(row, 'name', ''),
+                        last_price=self._f(row, 'last_price'),
+                        open_price=self._f(row, 'open_price'),
+                        high_price=self._f(row, 'high_price'),
+                        low_price=self._f(row, 'low_price'),
+                        prev_close=self._f(row, 'prev_close_price'),
+                        bid=self._f(row, 'bid_price'),
+                        ask=self._f(row, 'ask_price'),
+                        bid_vol=self._f(row, 'bid_vol'),
+                        ask_vol=self._f(row, 'ask_vol'),
+                        volume=self._i(row, 'volume'),
+                        turnover=self._f(row, 'turnover'),
+                        turnover_rate=self._f(row, 'turnover_rate'),
+                        volume_ratio=self._f(row, 'volume_ratio'),
+                        amplitude=self._f(row, 'amplitude'),
+                        highest_52w=self._f(row, 'highest52weeks_price'),
+                        lowest_52w=self._f(row, 'lowest52weeks_price'),
+                        pe_ratio=self._fn(row, 'pe_ratio'),
+                        pb_ratio=self._fn(row, 'pb_ratio'),
+                        pe_ttm=self._fn(row, 'pe_ttm_ratio'),
+                        earnings_yield=self._fn(row, 'ey_ratio'),
+                        market_cap=self._fn(row, 'total_market_val'),
+                        circulating_market_cap=self._fn(row, 'circular_market_val'),
+                        eps_ttm=self._fn(row, 'earning_per_share'),
+                        net_profit=self._fn(row, 'net_profit'),
+                        net_asset_per_share=self._fn(row, 'net_asset_per_share'),
+                        dividend_ttm=self._fn(row, 'dividend_ttm'),
+                        dividend_yield_ttm=self._fn(row, 'dividend_ratio_ttm'),
+                        dividend_lfy=self._fn(row, 'dividend_lfy'),
+                        issued_shares=self._fn(row, 'issued_shares'),
+                        short_sell_rate=self._fn(row, 'short_sell_rate'),
+                        short_available=self._fn(row, 'short_available_volume'),
+                        suspension=self._s(row, 'suspension', '') == 'True' or self._s(row, 'suspension', '') is True,
+                        lot_size=self._i(row, 'lot_size', 100),
+                        update_time=self._dt(row, 'update_time'),
+                    )
+                    # Compute derived fields
+                    self._compute_derived_stock(snap)
+                    results.append(snap)
+
+            except FutureTimeoutError:
+                log.warning(f"Moomoo timeout for batch {i}-{i+len(batch)}, falling back to yfinance")
+                for ticker in batch:
+                    fallback_snap = get_stock_snapshot_fallback(ticker)
+                    if fallback_snap:
+                        results.append(fallback_snap)
+                continue
+            except Exception as e:
+                log.error(f"Error fetching batch {i}-{i+len(batch)}: {e}")
+                continue
 
         return results
 

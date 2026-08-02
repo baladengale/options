@@ -1204,9 +1204,13 @@ def main():
         force=getattr(args, 'force', False))
 
     # ── Market hours check ──
+    # Single-cycle commands (`once`, etc.) exit immediately if closed.
+    # `run` mode loops internally (sleeps and re-checks), so it must NOT
+    # early-return here — otherwise the engine would exit on weekends/nights
+    # and the whole point of a continuous daemon would be defeated.
     skip_closed = getattr(args, 'skip_closed', False)
     force = getattr(args, 'force', False)
-    if skip_closed and not force:
+    if skip_closed and not force and args.cmd != 'run':
         market_open, reason = is_market_open()
         if not market_open:
             print(f"⏸️  {reason}")

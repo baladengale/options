@@ -381,7 +381,7 @@ def _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv):
         # ── Option decisions ──
         roll_recs = []
         if pf.options:
-            roll_recs = _score_options(pf, snap_map, yf_client, today, trend_map, nlv, pf)
+            roll_recs = _score_options(pf, snap_map, yf_client, today, trend_map, nlv, pf, orders=orders)
 
         # ── Put/call overlap ──
         reports = analyze_overlap(pf.options, pf.stocks, snapshots=snap_map, today=today)
@@ -515,7 +515,8 @@ def _fetch_option_snapshots(moomoo, codes):
     return snap_map
 
 
-def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, portfolio=None):
+def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, portfolio=None,
+                    orders=None):
     trend_map = trend_map or {}
     scarcity = _capital_scarcity(portfolio, nlv) if portfolio and nlv else None
     roll_recs = []
@@ -537,8 +538,9 @@ def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, por
         bid = current.bid or 0
         profit_captured = ((pos['cost'] - bid) / pos['cost'] * 100) if pos['cost'] > 0 else 0
         tctx = trend_map.get(pos.get('ticker'))
-        score, dec = _score_option(pos, current, profit_captured, pos.get('pl', 0), today,
-                                   yf_client, trend_ctx=tctx, capital_scarcity=scarcity)
+        score, dec, _pd = _score_option(pos, current, profit_captured, pos.get('pl', 0), today,
+                                        yf_client, trend_ctx=tctx, capital_scarcity=scarcity,
+                                        orders=orders)
         print(f"  {code:<26s} {pos['qty']:>5,.0f} {dte:>4d} {current.delta:>+6.3f} "
               f"${bid:>6,.2f} {profit_captured:>+6.1f}% {score:>5.1f}  {dec}")
         # Collect roll-winner recommendations (recommend-only; net-credit + ≤2 rolls gate).

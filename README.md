@@ -111,14 +111,32 @@ Autonomous paper portfolio that mirrors the strategy using the same scoring + gu
 | `reset --force` | Wipe all paper data |
 | `test` | Self-check (no OpenD needed) |
 
-**Automatic mode** (recommended):
+**Automatic mode — macOS LaunchAgent** (recommended on this MacBook):
 ```bash
-# tmux / continuous
-tmux new -s oie
-python3 scripts/oie_engine.py run --interval 30 --skip-closed
+# Install once:
+cp deploy/com.oie.engine.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.oie.engine.plist
 
-# OR cron (runs during US market hours, your local timezone)
-*/30 21-7 * * 1-5 cd ~/options && python3 scripts/oie_engine.py once --skip-closed >> logs/oie.log 2>&1
+# Management:
+launchctl list | grep oie                              # Check live PID + exit code
+launchctl unload ~/Library/LaunchAgents/com.oie.engine.plist   # Stop
+launchctl load  ~/Library/LaunchAgents/com.oie.engine.plist   # Start / restart
+
+# Logs:
+tail -f logs/oie_launchd.log        # wrapper + engine stdout (heartbeat, per-cycle lines)
+tail -f logs/options.log            # structured DEBUG logs per module
+```
+
+How the LaunchAgent behaves:
+- **Boot**: starts at login → wrapper (`deploy/run_oie.sh`) waits 10 min for the system to settle → launches OpenD via bundle ID `com.moomoo.opend` → waits up to 90s for port 11111 → starts the engine
+- **Crash**: launchd auto-restarts (`KeepAlive`); the wrapper detects OpenD is still up (port 11111 open) and skips the 10-min delay for a fast recovery
+- **Market hours**: the engine sleeps 60s at a time whenever US markets are closed (weekends/nights), then fires a full cycle at market open and every 60 minutes after
+- **Failure visibility**: cycle errors land in `logs/options.log`, process crashes land in `logs/oie_launchd.log`, and the trade audit trail lives in `db/oie_paper.db` → `paper_trades`
+
+If you prefer running it manually instead (tmux / ad-hoc):
+```bash
+tmux new -s oie
+python3 scripts/oie_engine.py run --interval 60 --skip-closed
 ```
 
 **Manual mode** (ad-hoc review):
@@ -129,6 +147,30 @@ python3 scripts/oie_engine.py status           # Check results
 ```
 
 **Cycle phases** (each `once`/`run` iteration): load state → mark-to-market → check exits (≥50% profit → close, DTE≤0 → expire/assign) → screen new opportunities → apply guardrails (15% concentration, cash buffer, max 8 positions, 2 trades/day) → execute paper trades → snapshot.
+
+### `decision_review.py` — Decision Retrospective (Hold-to-Expiry vs Actual)
+
+Reconstructs your real option-trading decisions over a window (default 60 days) and compares each against a **hypothetical "hold to expiry"** baseline using actual underlying prices at each contract's expiry. Answers the question: *"Did my aggressive closes/rolls actually help, or would I have been better just holding?"*
+
+```bash
+python3 scripts/decision_review.py                  # last 60 days
+python3 scripts/decision_review.py --days 90        # wider window
+python3 scripts/decision_review.py --ticker V       # one ticker
+python3 scripts/decision_review.py --profit-targets                # 50%/80%/100% profit-booking analysis
+python3 scripts/decision_review.py --profit-targets --days 90      # profit targets, 90-day window
+```
+
+**What it reports:**
+- Per-contract table: entry premium, buy-back cost, actual realized P&L vs hypothetical hold-to-expiry P&L, and the **decision impact** (difference)
+- `✅ HELPED` = active management beat holding (e.g., avoided a losing assignment)
+- `❌ HURT` = holding to expiry would have been better (e.g., paid to close an OTM winner)
+- `⏳ UNDECIDED` = contract's expiry is still in the future
+- **BY TICKER** and **BY DECISION TYPE** roll-ups
+- Worst/best decision deep-dives with underlying price at expiry
+
+**`--profit-targets` mode** specifically analyzes contracts that were **closed at a profit** (bought back below entry premium) and simulates what would have happened if you had instead: held to **80% profit**, or held all the way to **100% (expiry)**. It flags contracts where early booking created an **opportunity cost** because the option continued to decay to zero.
+
+Data sources: live moomoo order history + yfinance for historical underlying prices at each expiry date. Read-only — never submits orders.
 
 ### `market_data.py` — Single Ticker Deep Dive
 

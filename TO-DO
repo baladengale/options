@@ -1,29 +1,13 @@
-## Overall small corrections to fund status:
-Fund Asseets - showing 19673 Vs actually its 19568.. can you check and find out drift?
-Same drift with liquid due to Fund assets.. check it out
-Buying power here showing - 78413 Vs in app its showing 99175? Is there any gaps in terms how its treated or calculated?
-total assets showing bit more.. .actually in app showing 222033 USD
-All the calculations in this framework should be USD.. Account currency change to USD..
-what is Net Liquidation and how we reached here?
+## Framework Adjustments to Make
 
-CAn we fillup Total liabilities with CSP options ?
-Net assets - Remove this.. as we have total assets
+Based on this evidence, here's what to change in `config/rules.yaml`:
 
-(.venv) bala@mac options % python3 scripts/portfolio.py --funds
-📋 Loading portfolio from moomoo... 13 stocks, 10 options, $21,458 liquid
+1. __Add an OTM-only close gate for profit-taking closes.__ The framework currently lets you close at 50% profit on ANY position, even those with Δ < 0.30 and > 30 DTE remaining. Add: *"Only auto-close at 50% if |Δ| ≥ 0.30 OR DTE ≤ 21. Otherwise hold and let theta work."* This directly targets the 14 over-management losses.
 
-==========================================================================================
-  💰 ACCOUNT FUNDS
-==========================================================================================
-  US Cash:            $      1,784.30
-  Fund Assets:        $     19,673.75
-  Liquid (cash+fund): $     21,458.05
-  Buying Power:       $     78,413.96  (margin — matches moomoo app)
-  Cash Buying Power:  $     21,155.07  (cash-only, usd_net_cash_power)
-  Total Assets:       $    223,231.41
-  Total Liabilities:  $          0.00
-  Net Assets:         $          0.00
-  Margin Used:                  0.0%
-  Net Liquidation:    $    234,569.74
-  CSP Liability:      $       155,000  (cash needed if all puts assign)
-  Account Currency:   HKD
+2. __Raise the delta threshold for defensive closes.__ The current `csp_decision: 0.40` gate triggers too early. The GOOG/MU/MSFT/AVGO/NVDA cases all had Δ < 0.40 when closed. Change `stop_loss.delta.csp_decision` from 0.40 → __0.50__, and `cc_warn` from 0.40 → __0.50__. Only close defensively when assignment risk is REAL.
+
+3. __Let trend-modulated profit targets do their job for CSP winners.__ The current `profit_take_csp` config already has `base_pct: 50` / `trend_target_pct: 70` / `strong_trend_target_pct: 85`. These were coded but the actual trading behavior shows closes happening at 50% regardless of trend. Make the framework __respect the trend extension__ — when the trend composite is ≥ 50 and the stock is running away from your put, don't close at 50%, hold for the 70-85% target instead.
+
+4. __The V churn needs a brake.__ 14 V contracts in 60 days generated only +$4,487 gross (+$258 net) — lots of activity, minimal edge. The framework should flag this as over-management. Consider: *"Max 2 closes per ticker per month"* or *"No re-opening the same strike/expiry within 14 days"*.
+
+5. __Keep the hard-stop saves as-is.__ TSLA and AMD proved the stops work. The `3x far_close`, `2x mid_close`, `1.5x near_close` premium-multiple stops are doing their job. Don't weaken them.

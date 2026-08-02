@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.oie.engine</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/bala/workspace/options/deploy/run_oie.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/bala/workspace/options</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OPTIONS_HOME</key>
+        <string>/Users/bala/workspace/options</string>
+    </dict>
+
+    <!-- Start at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Auto-restart on crash (same as systemd Restart=always) -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Prevent crash-looping: min 60s between restarts -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/bala/workspace/options/logs/oie_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/bala/workspace/options/logs/oie_launchd.log</string>
+</dict>
+</plist>

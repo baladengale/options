@@ -26,10 +26,18 @@ wins, else walk up to the folder with `config/rules.yaml`.
 ```bash
 python3 skills/oie-daily-digest/scripts/daily_digest.py --morning  # 07:00
 python3 skills/oie-daily-digest/scripts/daily_digest.py --evening  # 19:00
-python3 skills/oie-daily-digest/scripts/daily_digest.py --send    # + email (needs config/email.yaml)
+python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html logs/digest-<ts>.html  # email AFTER GenAI abstract
 ```
 
 Chains: portfolio → market_sentiment → market_data → screener → OIE paper cycle.
+
+**⚠️ Single-email workflow (no duplicates):**
+1. Run the digest **without** `--send` → writes `logs/digest-<ts>.html` + `.json`. The run never emails.
+2. GenAI replaces the `<div id="abstract">` bullets with the Digest Abstract (action items / criticals).
+3. Send the **edited** file exactly once:
+   `python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html logs/digest-<ts>.html`
+
+Historical note: `--send` alone on a digest run was removed — it caused duplicate emails (one with the deterministic abstract, one with the GenAI abstract).
 
 ## Commands
 
@@ -59,7 +67,8 @@ After `daily_digest.py` writes `logs/`:
 3. Replace the `<div id="abstract">` bullets in HTML with the GenAI bullets
    (deterministic sections untouched), then email or re-open.
 
-Email sending is opt-in (`--send`); without it the digest only writes HTML+JSON.
+Email sending is **send-only** via `--send --html <file>` (needs `config/email.yaml`);
+the digest run itself only writes HTML+JSON and never emails.
 
 ## Hard Constraints (rules.yaml / GOAL.md)
 

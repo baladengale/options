@@ -207,12 +207,31 @@ def main():
     ap = argparse.ArgumentParser(description='OIE Daily Digest - rich HTML of the full engine')
     ap.add_argument('--morning', action='store_true', help='Label as morning (07:00)')
     ap.add_argument('--evening', action='store_true', help='Label as evening (19:00)')
-    ap.add_argument('--send', action='store_true', help='Deliver via SMTP (needs config/email.yaml)')
+    ap.add_argument('--send', action='store_true', help='Deliver via SMTP (needs config/email.yaml). ' +
+                                                       'Requires --html: emails the GENAI-EDITED file only (no duplicate).')
+    ap.add_argument('--html', default='', help='Path to a previously generated digest HTML to email (send-only mode)')
     ap.add_argument('--to', default='', help='Override recipient')
     ap.add_argument('--skip-screener', action='store_true')
     ap.add_argument('--skip-oie', action='store_true')
     ap.add_argument('--no-external', action='store_true')
     args = ap.parse_args()
+
+    # Send-only mode: email a previously generated (GenAI-edited) digest HTML.
+    # The digest run itself NEVER sends — this prevents duplicate emails.
+    if args.send:
+        if not args.html:
+            print("ERROR: --send requires --html <path> to the GenAI-edited digest HTML.")
+            print("       The digest run does not email; edit the abstract first, then send ONCE:")
+            print("       python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html logs/digest-<ts>.html")
+            sys.exit(1)
+        if not os.path.exists(args.html):
+            print(f"ERROR: --html file not found: {args.html}")
+            sys.exit(1)
+        with open(args.html) as f:
+            html_text = f.read()
+        subject = f"OIE Daily Digest - {args.html.split('/')[-1]}"
+        send_email(html_text, subject, args.to, load_email_cfg())
+        return
 
     period = 'Morning (07:00)' if args.morning else 'Evening (19:00)' if args.evening else 'Ad-hoc'
     ext = '--no-external' if args.no_external else ''
@@ -240,9 +259,8 @@ def main():
     html_path, facts_path = write_output(html_text, facts)
     print(f"\nHTML: {html_path}")
     print(f"Facts: {facts_path}  (feed this to the GenAI abstract step)")
-
-    if args.send:
-        send_email(html_text, subject, args.to, load_email_cfg())
+    print("\nNext: let GenAI replace the <div id=\"abstract\"> bullets, then send ONE email:")
+    print(f"  python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html {html_path}")
 
 
 if __name__ == '__main__':

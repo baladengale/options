@@ -60,22 +60,24 @@ def _pos(ticker='AVGO', type='PUT', strike=350.0, expiry='2099-01-01', qty=-1, c
 # ── _score_option decision matrix ────────────────────────────────
 
 def test_option_70pct_profit_close():
-    s, dec = _score_option(_pos(), _opt(dte=40), profit_captured=75.0, pl=700,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40), profit_captured=75.0, pl=700,
                            today=TODAY, yf_client=None)
-    # With no trend context, 75% exceeds the 50% base target → CLOSE.
-    assert 'CLOSE' in dec and '75%' in dec
-    assert s <= 3.0   # strongly improved
+    # With no trend context, 75% exceeds the 50% base target → engine says CLOSE.
+    # But OTM gate (spec §6): |Δ|=0.20 < 0.30, DTE=40 > 21 → HOLD override.
+    assert 'HOLD' in dec or 'OTM GATE' in dec
+    assert 'CLOSE' not in dec
 
 
 def test_option_50pct_profit_close():
-    s, dec = _score_option(_pos(), _opt(dte=40), profit_captured=55.0, pl=500,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40), profit_captured=55.0, pl=500,
                            today=TODAY, yf_client=None)
-    assert 'CLOSE' in dec and '50%' in dec
+    # OTM gate (spec §6): |Δ|=0.20 < 0.30, DTE=40 > 21 → HOLD, not CLOSE
+    assert 'HOLD' in dec or 'OTM GATE' in dec
 
 
 def test_option_csp_delta_stop():
     # CSP, |delta| >= 0.60 → stop / assignment decision
-    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.65), profit_captured=10.0,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.65), profit_captured=10.0,
                            pl=0, today=TODAY, yf_client=None)
     assert 'roll' in dec or 'assignment' in dec or 'STOP' in dec or 'exit' in dec
     assert s >= 7.0
@@ -83,7 +85,7 @@ def test_option_csp_delta_stop():
 
 def test_option_far_dte_3x_stop_tier():
     # Underwater 3× loss, >30 DTE → 3× STOP TIER
-    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-300.0,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-300.0,
                            pl=-3000, today=TODAY, yf_client=None)
     assert 'STOP TIER' in dec
     assert s >= 7.0
@@ -91,7 +93,7 @@ def test_option_far_dte_3x_stop_tier():
 
 def test_option_near_dte_15x_stop_gamma():
     # Underwater 1.5× loss, <=21 DTE → 1.5× STOP TIER (gamma)
-    s, dec = _score_option(_pos(), _opt(dte=10, delta=-0.20), profit_captured=-150.0,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=10, delta=-0.20), profit_captured=-150.0,
                            pl=-1500, today=TODAY, yf_client=None)
     assert '1.5× STOP TIER' in dec
     assert s >= 7.0
@@ -99,7 +101,7 @@ def test_option_near_dte_15x_stop_gamma():
 
 def test_option_heavy_loss_catchall():
     # pl < -1000 with no stronger trigger → thesis-aware message (or UNDERWATER fallback)
-    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-5.0,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-5.0,
                            pl=-1500, today=TODAY, yf_client=None)
     # When MoomooClient is available: thesis-aware path ("Position Down — Thesis intact")
     # When unavailable: fallback ("UNDERWATER — Monitor thesis, not price")
@@ -108,7 +110,7 @@ def test_option_heavy_loss_catchall():
 
 def test_option_normal_hold():
     # Healthy CSP, mid-DTE, small profit → HOLD-ish, score near neutral
-    s, dec = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=10.0,
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=10.0,
                            pl=100, today=TODAY, yf_client=None)
     assert 1.0 <= s <= 10.0
     assert 'HOLD' in dec or 'monitor' in dec.lower() or 'captured' in dec.lower() or 'Management Point' in dec
@@ -119,7 +121,7 @@ def test_option_score_always_in_range():
     for pc in (-400, -200, -50, 0, 30, 60, 90):
         for dte in (1, 5, 14, 21, 40, 90):
             for d in (-0.7, -0.45, -0.2, -0.05):
-                s, _ = _score_option(_pos(), _opt(dte=dte, delta=d),
+                s, _, _pd = _score_option(_pos(), _opt(dte=dte, delta=d),
                                      profit_captured=pc, pl=-5000,
                                      today=TODAY, yf_client=None)
                 assert 1.0 <= s <= 10.0, f"score {s} out of range for pc={pc} dte={dte} d={d}"
