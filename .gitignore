@@ -16,6 +16,8 @@ logs/
 # Python
 __pycache__/
 *.pyc
+config/email.yaml
+logs/
 *.pyo
 .eggs/
 *.egg-info/

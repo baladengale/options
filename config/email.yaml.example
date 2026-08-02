@@ -1,0 +1,11 @@
+# Email delivery config for daily_digest.py --send
+# Copy to config/email.yaml (NOT committed — already gitignored) and fill in.
+#
+# Gmail: use an App Password (Google Account → Security → 2-Step Verification → App Passwords)
+#   https://support.google.com/accounts/answer/185833
+
+smtp_host: smtp.gmail.com
+smtp_port: 587
+username: your.email@gmail.com          # sender (must be the SMTP login)
+password: your-16-char-app-password     # Gmail app password
+to: your.email@gmail.com                # recipient (defaults to username if omitted)

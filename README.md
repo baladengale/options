@@ -31,6 +31,23 @@ python3 scripts/oie_engine.py status         # Paper positions + P&L
 
 **Prerequisites**: moomoo OpenD on `127.0.0.1:11111`. Python 3.9+. The REAL portfolio is read live from moomoo each run — no local DB. The only database is `db/oie_paper.db` for paper trading.
 
+### OIE Daily Digest — Full Engine in One HTML Report
+
+Chains **portfolio → market_sentiment → market_data → screener → OIE paper cycle** into a single rich HTML file with a 5–10 bullet Daily Decision Abstract, ready to be emailed.
+
+```bash
+python3 skills/oie-daily-digest/scripts/daily_digest.py --morning                  # 07:00 pre-market digest
+python3 skills/oie-daily-digest/scripts/daily_digest.py --evening                  # 19:00 post-market digest
+python3 skills/oie-daily-digest/scripts/daily_digest.py --send                     # also email (needs config/email.yaml)
+python3 skills/oie-daily-digest/scripts/daily_digest.py --skip-screener --skip-oie # fast mode
+```
+
+- Output: `logs/digest-<timestamp>.html` (rich HTML) + `logs/digest-<timestamp>.json` (facts for the GenAI abstract)
+- OIE step always runs `--dry-run` — **paper only, never real orders**
+- Check `config/email.yaml.example` for Gmail SMTP setup; `--send` delivers the HTML email
+- Cron ideas: `0 7 * * 1-5` and `0 19 * * 1-5` for morning/evening digests (see skill `skills/oie-daily-digest/`)
+- The script resolves the repo root dynamically (`OIE_REPO` env override or walk-up to `config/rules.yaml`)
+
 ---
 
 ## Scripts
