@@ -5,7 +5,7 @@ db/*.sqlite3
 db/*.db-journal
 db/*.db-wal
 db/*.db-shm
-
+.env.sh
 # Logs — never commit
 logs/
 *.log

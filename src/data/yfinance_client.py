@@ -721,3 +721,112 @@ def _classify_news_type(title: str) -> str:
     if any(kw in t for kw in _REGULATORY_KEYWORDS):
         return 'REGULATORY'
     return 'GENERAL'
+
+
+# ═══════════════════════════════════════════════════════════════
+# MOOMOO FALLBACK METHODS (called when moomoo times out or fails)
+# ═══════════════════════════════════════════════════════════════
+
+def get_stock_snapshot_fallback(ticker: str) -> Optional[StockSnapshot]:
+    """Fallback stock snapshot from yfinance when moomoo fails."""
+    try:
+        _shut_up()
+        plain_ticker = ticker.replace('US.', '')
+        t = yf.Ticker(plain_ticker)
+        info = t.info or {}
+        hist = t.history(period='5d', interval='1d')
+
+        if info is None or len(hist) == 0:
+            _speak_up()
+            return None
+
+        latest = hist.iloc[-1]
+        prev_close = info.get('previousClose') or latest.get('Close')
+
+        snap = StockSnapshot(
+            ticker=ticker,
+            name=info.get('longName') or info.get('shortName', ''),
+            last_price=info.get('currentPrice') or info.get('regularMarketPrice') or latest.get('Close'),
+            open_price=latest.get('Open'),
+            high_price=latest.get('High'),
+            low_price=latest.get('Low'),
+            prev_close=prev_close,
+            bid=info.get('bid'),
+            ask=info.get('ask'),
+            bid_vol=info.get('bidSize'),
+            ask_vol=info.get('askSize'),
+            volume=int(latest.get('Volume') or 0),
+            turnover=None,
+            turnover_rate=None,
+            volume_ratio=None,
+            amplitude=None,
+            highest_52w=info.get('fiftyTwoWeekHigh'),
+            lowest_52w=info.get('fiftyTwoWeekLow'),
+            pe_ratio=info.get('trailingPE'),
+            pb_ratio=info.get('priceToBook'),
+            pe_ttm=info.get('trailingPE'),
+            earnings_yield=info.get('earningsQuarterlyGrowth'),
+            market_cap=info.get('marketCap'),
+            circulating_market_cap=info.get('floatShares'),
+            eps_ttm=info.get('trailingEps'),
+            net_profit=None,
+            net_asset_per_share=info.get('bookValue'),
+            dividend_ttm=info.get('dividendRate'),
+            dividend_yield_ttm=info.get('dividendYield'),
+            dividend_lfy=None,
+            issued_shares=info.get('sharesOutstanding'),
+            short_sell_rate=None,
+            short_available=None,
+            suspension=False,
+            lot_size=100,
+            update_time=datetime.now().isoformat(),
+        )
+        # Compute derived fields
+        if snap.ask > 0 and snap.bid > 0:
+            mid = (snap.ask + snap.bid) / 2
+            snap.bid_ask_spread_pct = (snap.ask - snap.bid) / mid * 100
+        if snap.prev_close > 0:
+            snap.change_pct = (snap.last_price - snap.prev_close) / snap.prev_close * 100
+
+        _speak_up()
+        return snap
+    except Exception as e:
+        _speak_up()
+        return None
+
+
+def get_price_history_fallback(ticker: str, days: int = 252) -> list[dict]:
+    """Fallback price history from yfinance when moomoo fails."""
+    try:
+        _shut_up()
+        plain_ticker = ticker.replace('US.', '')
+        t = yf.Ticker(plain_ticker)
+
+        # Map days to yfinance period
+        period = '1y' if days >= 252 else '6mo' if days >= 180 else '3mo' if days >= 90 else '1mo'
+        hist = t.history(period=period, interval='1d')
+
+        if hist is None or len(hist) == 0:
+            _speak_up()
+            return []
+
+        history = []
+        for date, row in hist.iterrows():
+            history.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'open': float(row.get('Open') or 0),
+                'high': float(row.get('High') or 0),
+                'low': float(row.get('Low') or 0),
+                'close': float(row.get('Close') or 0),
+                'volume': int(row.get('Volume') or 0),
+            })
+
+        _speak_up()
+        return history[-days:]  # Return only the requested number of days
+    except Exception as e:
+        _speak_up()
+        return []
+
+
+# Import StockSnapshot for fallback methods
+from src.data.models import StockSnapshot

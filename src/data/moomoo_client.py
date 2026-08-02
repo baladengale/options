@@ -16,14 +16,19 @@ Usage:
 import time
 from datetime import date, datetime
 from typing import Optional
+import logging
 
 from moomoo import (
     OpenQuoteContext, RET_OK, SubType,
 )
 
+from src.data.timeout_utils import with_timeout, with_fallback
+from src.data.yfinance_client import get_stock_snapshot_fallback, get_price_history_fallback
+
 # Suppress SDK connect/disconnect log spam on stderr
-import logging
 logging.getLogger('FTConsoleLog').setLevel(logging.WARNING)
+
+log = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════
 # SAFETY: This client is READ-ONLY. It wraps OpenQuoteContext
@@ -38,11 +43,11 @@ from src.data.models import StockSnapshot, OptionSnapshot
 class MoomooClient:
     """Thin wrapper over moomoo OpenQuoteContext. Returns typed dataclasses."""
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 11111, rate_limit: float = 0.2):
+    def __init__(self, host: str = '127.0.0.1', port: int = 11111, rate_limit: float = 0.05):
         self._ctx: Optional[OpenQuoteContext] = None
         self._host = host
         self._port = port
-        self._rate_limit = rate_limit  # seconds between API calls to avoid moomoo throttling
+        self._rate_limit = rate_limit  # seconds between API calls to avoid moomoo throttling (reduced from 0.2 to 0.05)
         self._last_call = 0.0
         # Cache: daily OHLCV data only changes once per day
         self._history_cache: dict[tuple[str, int], list[dict]] = {}
@@ -80,24 +85,44 @@ class MoomooClient:
     # STOCK SNAPSHOT
     # ═══════════════════════════════════════════════════════════
 
-    def get_stock_snapshot(self, ticker: str) -> Optional[StockSnapshot]:
-        """Get full snapshot for a single stock. Returns None if no data."""
-        snapshots = self.get_stock_snapshots([ticker])
-        return snapshots[0] if snapshots else None
+    def get_stock_snapshot(self, ticker: str, timeout_sec: float = 3.0) -> Optional[StockSnapshot]:
+        """Get full snapshot for a single stock with timeout. Falls back to yfinance on timeout."""
+        snapshots = self.get_stock_snapshots([ticker], timeout_sec=timeout_sec)
+        if not snapshots:
+            # Fallback to yfinance if moomoo fails
+            log.warning(f"Moomoo failed for {ticker}, falling back to yfinance")
+            return get_stock_snapshot_fallback(ticker)
+        return snapshots[0]
 
-    def get_stock_snapshots(self, tickers: list[str]) -> list[StockSnapshot]:
-        """Batch snapshot for multiple stocks (max 400 per moomoo limit)."""
+    def get_stock_snapshots(self, tickers: list[str], timeout_sec: float = 3.0) -> list[StockSnapshot]:
+        """Batch snapshot for multiple stocks with timeout per batch (max 400 per moomoo limit)."""
         results: list[StockSnapshot] = []
         batch_size = 400
 
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i:i + batch_size]
             self._throttle()
-            ret, data = self.ctx.get_market_snapshot(batch)
-            if ret != RET_OK or data is None or len(data) == 0:
-                continue
 
-            for _, row in data.iterrows():
+            try:
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
+                def _fetch_batch():
+                    return self.ctx.get_market_snapshot(batch)
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_fetch_batch)
+                    ret, data = future.result(timeout=timeout_sec)
+
+                if ret != RET_OK or data is None or len(data) == 0:
+                    # Fall back to yfinance for failed batch
+                    log.warning(f"Moomoo failed for batch {i}-{i+len(batch)}, falling back to yfinance")
+                    for ticker in batch:
+                        fallback_snap = get_stock_snapshot_fallback(ticker)
+                        if fallback_snap:
+                            results.append(fallback_snap)
+                    continue
+
+                for _, row in data.iterrows():
                 code = self._s(row, 'code', '')
                 if not code:
                     continue
@@ -368,35 +393,60 @@ class MoomooClient:
     # ═══════════════════════════════════════════════════════════
 
     def get_price_history(
-        self, ticker: str, days: int = 252
+        self, ticker: str, days: int = 252, timeout_sec: float = 3.0
     ) -> list[dict]:
-        """Get daily OHLCV history. Returns list of dicts with keys:
-        date, open, high, low, close, volume.
+        """Get daily OHLCV history with timeout. Falls back to yfinance on timeout.
+        Returns list of dicts with keys: date, open, high, low, close, volume.
         Cached per session — daily data only changes once per day."""
         cache_key = (ticker, days)
         if cache_key in self._history_cache:
             return self._history_cache[cache_key]
 
-        from moomoo import KLType, AuType
-        self._throttle()
-        ret, data, _ = self.ctx.request_history_kline(
-            ticker, max_count=days, ktype=KLType.K_DAY, autype=AuType.QFQ
-        )
-        if ret != RET_OK or data is None or len(data) == 0:
-            return []  # don't cache failures — retry next time
+        try:
+            # Try moomoo with timeout
+            from moomoo import KLType, AuType
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
-        records = []
-        for _, row in data.iterrows():
-            records.append({
-                'date': str(row.get('time_key', '')),
-                'open': float(row.get('open', 0) or 0),
-                'high': float(row.get('high', 0) or 0),
-                'low': float(row.get('low', 0) or 0),
-                'close': float(row.get('close', 0) or 0),
-                'volume': int(row.get('volume', 0) or 0),
-            })
-        self._history_cache[cache_key] = records
-        return records
+            def _fetch_moomoo():
+                self._throttle()
+                return self.ctx.request_history_kline(
+                    ticker, max_count=days, ktype=KLType.K_DAY, autype=AuType.QFQ
+                )
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_moomoo)
+                ret, data, _ = future.result(timeout=timeout_sec)
+
+            if ret != RET_OK or data is None or len(data) == 0:
+                # Fall back to yfinance
+                log.warning(f"Moomoo failed for {ticker} history, falling back to yfinance")
+                fallback_data = get_price_history_fallback(ticker, days)
+                if fallback_data:
+                    self._history_cache[cache_key] = fallback_data
+                return fallback_data
+
+            records = []
+            for _, row in data.iterrows():
+                records.append({
+                    'date': str(row.get('time_key', '')),
+                    'open': float(row.get('open', 0) or 0),
+                    'high': float(row.get('high', 0) or 0),
+                    'low': float(row.get('low', 0) or 0),
+                    'close': float(row.get('close', 0) or 0),
+                    'volume': int(row.get('volume', 0) or 0),
+                })
+            self._history_cache[cache_key] = records
+            return records
+
+        except FutureTimeoutError:
+            log.warning(f"Moomoo timeout for {ticker} history, falling back to yfinance")
+            fallback_data = get_price_history_fallback(ticker, days)
+            if fallback_data:
+                self._history_cache[cache_key] = fallback_data
+            return fallback_data
+        except Exception as e:
+            log.error(f"Error fetching history for {ticker}: {e}")
+            return []
 
     # ═══════════════════════════════════════════════════════════
     # CAPITAL FLOW

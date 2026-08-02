@@ -41,20 +41,20 @@ LOGS = os.path.join(REPO, 'logs')
 PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>OIE Daily Digest</title>
 <style>
-body{{font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px}}
+body{{font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;background:#0d1117;color:#ffffff;margin:0;padding:24px}}
 .wrap{{max-width:920px;margin:0 auto}}
-h1{{color:#58a6ff;border-bottom:2px solid #30363d;padding-bottom:8px;font-size:24px}}
-.sub{{color:#8b949e;font-size:13px;margin-bottom:18px}}
+h1{{color:#79c0ff;border-bottom:2px solid #30363d;padding-bottom:8px;font-size:24px}}
+.sub{{color:#d0d7de;font-size:13px;margin-bottom:18px}}
 .card{{background:#161b27;border:1px solid #30363d;border-radius:10px;padding:14px 16px;margin:14px 0}}
-.card h2{{margin:0 0 8px;font-size:16px;color:#3fb950}}
+.card h2{{margin:0 0 8px;font-size:16px;color:#7ee787}}
 .card h2.alert{{color:#f85149}}
-pre{{background:#0d1117;border:1px solid #23272f;border-radius:8px;padding:12px;overflow-x:auto;line-height:1.45;font-size:12px;margin:8px 0 0}}
+pre{{background:#10151d;border:1px solid #2a303c;border-radius:8px;padding:12px;overflow-x:auto;line-height:1.45;font-size:12px;margin:8px 0 0;color:#ffffff}}
 .metrics{{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}}
 .metric{{flex:1 1 150px;background:#161b27;border:1px solid #30363d;border-radius:10px;padding:10px 12px}}
-.metric .k{{font-size:11px;color:#8b949e;text-transform:uppercase}}
-.metric .v{{font-size:20px;font-weight:600;color:#58a6ff}}
+.metric .k{{font-size:11px;color:#d0d7de;text-transform:uppercase}}
+.metric .v{{font-size:20px;font-weight:600;color:#79c0ff}}
 .bullets li{{margin:6px 0;line-height:1.5}}
-.foot{{color:#8b949e;font-size:11px;text-align:center;margin-top:24px}}
+.foot{{color:#d0d7de;font-size:11px;text-align:center;margin-top:24px}}
 </style></head><body><div class="wrap">
 <h1>OIE Daily Digest</h1>
 <div class="sub">{ts} &middot; {period} &middot; Generated from moomoo OpenD + yfinance</div>
