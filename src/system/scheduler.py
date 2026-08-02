@@ -1,20 +1,19 @@
 """
 Systematic Timeline for OIE Framework
-Enforces weekly/monthly reviews, eliminates daily decisions
+Daily 09:00 UTC review — thesis + guardrail checks every day.
 
-This module implements the systematic timeline framework to prevent trading drift
-by enforcing scheduled reviews and eliminating daily decision-making.
+This module enforces a single daily review at 09:00 UTC where thesis
+validation and guardrail checks are performed together. No weekly/monthly
+cadence — every day is a review day.
 
 Research-backed approach:
-- Weekly thesis validation (Monday 9AM)
-- Monthly guardrail checks (1st of month 9AM)
-- Expiry processing only (Friday 4PM)
-- Daily status checks only (no decisions)
+- Daily 09:00 UTC: full review — thesis validation + guardrail checks
+- No weekly/monthly windows — the review runs every single day
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import logging
 
 log = logging.getLogger(__name__)
@@ -22,67 +21,44 @@ log = logging.getLogger(__name__)
 
 class ReviewType(Enum):
     """Types of scheduled reviews"""
-    DAILY_STATUS = "daily_status_check"
-    WEEKLY_THESIS = "weekly_thesis_validation"
-    MONTHLY_GUARDRAIL = "monthly_guardrail_check"
-    EXPIRY_PROCESSING = "expiry_processing_only"
+    DAILY_REVIEW = "daily_review"
 
 
 class ScheduleConfig:
     """Configuration for systematic timeline"""
 
-    # Weekly thesis validation: Monday 9AM
-    WEEKLY_THESIS_DAY = 0  # 0 = Monday
-    WEEKLY_THESIS_HOUR = 9
+    # Daily full review: 09:00 UTC
+    DAILY_REVIEW_HOUR = 9
 
-    # Expiry processing: Friday 4PM (16:00)
-    EXPIRY_PROCESSING_DAY = 4  # 4 = Friday
-    EXPIRY_PROCESSING_HOUR = 16
 
-    # Monthly guardrail check: 1st of month 9AM
-    MONTHLY_GUARDRAIL_DAY = 1
-    MONTHLY_GUARDRAIL_HOUR = 9
+def _to_utc(current_time: Optional[datetime] = None) -> datetime:
+    """Normalize to a naive UTC datetime.
 
-    # Daily status check: 9AM
-    DAILY_STATUS_HOUR = 9
+    If ``current_time`` is tz-aware it's converted to UTC and the tz
+    stripped; if naive it's assumed to already be UTC. Defaults to now (UTC).
+    """
+    if current_time is None:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+    if current_time.tzinfo is not None:
+        return current_time.astimezone(timezone.utc).replace(tzinfo=None)
+    return current_time
 
 
 def get_scheduled_action_type(current_time: Optional[datetime] = None) -> ReviewType:
     """
     Determine what type of action is appropriate for current time
 
+    Every day is a full review day (thesis + guardrails), scheduled at
+    09:00 UTC. There is no weekly/monthly distinction anymore.
+
     Args:
-        current_time: DateTime to check (defaults to now)
+        current_time: DateTime to check (defaults to now, UTC)
 
     Returns:
-        ReviewType indicating what type of review should be performed
-
-    Example:
-        >>> review_type = get_scheduled_action_type()
-        >>> if review_type == ReviewType.WEEKLY_THESIS:
-        ...     print("Time for weekly thesis validation")
+        ReviewType.DAILY_REVIEW always
     """
-    if current_time is None:
-        current_time = datetime.now()
-
-    day_of_week = current_time.weekday()  # 0=Monday, 6=Sunday
-    hour = current_time.hour
-    day_of_month = current_time.day
-
-    # Monday 9AM: Weekly Thesis Validation
-    if day_of_week == ScheduleConfig.WEEKLY_THESIS_DAY and hour == ScheduleConfig.WEEKLY_THESIS_HOUR:
-        return ReviewType.WEEKLY_THESIS
-
-    # Friday 4PM: Expiry Processing
-    if day_of_week == ScheduleConfig.EXPIRY_PROCESSING_DAY and hour == ScheduleConfig.EXPIRY_PROCESSING_HOUR:
-        return ReviewType.EXPIRY_PROCESSING
-
-    # First day of month 9AM: Monthly Guardrail Check
-    if day_of_month == ScheduleConfig.MONTHLY_GUARDRAIL_DAY and hour == ScheduleConfig.MONTHLY_GUARDRAIL_HOUR:
-        return ReviewType.MONTHLY_GUARDRAIL
-
-    # Default: Daily status only (no decisions)
-    return ReviewType.DAILY_STATUS
+    _to_utc(current_time)  # validates/normalizes; result unused (always DAILY_REVIEW)
+    return ReviewType.DAILY_REVIEW
 
 
 def is_review_time(review_type: ReviewType, current_time: Optional[datetime] = None) -> bool:
@@ -91,10 +67,10 @@ def is_review_time(review_type: ReviewType, current_time: Optional[datetime] = N
 
     Args:
         review_type: Type of review to check
-        current_time: DateTime to check (defaults to now)
+        current_time: DateTime to check (defaults to now, UTC)
 
     Returns:
-        True if it's time for this review type
+        True if this is the time for the given review type
     """
     return get_scheduled_action_type(current_time) == review_type
 
@@ -103,58 +79,28 @@ def next_review_time(review_type: ReviewType, current_time: Optional[datetime] =
     """
     Calculate the next scheduled time for a specific review type
 
+    Daily reviews run at 09:00 UTC; the next one is today at 09:00 UTC if
+    it hasn't happened yet, otherwise tomorrow at 09:00 UTC.
+
     Args:
         review_type: Type of review
-        current_time: Starting time (defaults to now)
+        current_time: Starting time (defaults to now, UTC)
 
     Returns:
-        datetime of next scheduled review
+        datetime of next scheduled review (naive UTC)
 
     Example:
-        >>> next_thesis = next_review_time(ReviewType.WEEKLY_THESIS)
-        >>> print(f"Next thesis review: {next_thesis}")
+        >>> next_review = next_review_time(ReviewType.DAILY_REVIEW)
+        >>> print(f"Next daily review: {next_review}")
     """
-    if current_time is None:
-        current_time = datetime.now()
+    now = _to_utc(current_time)
 
-    if review_type == ReviewType.WEEKLY_THESIS:
-        # Next Monday at 9AM
-        days_until_monday = (ScheduleConfig.WEEKLY_THESIS_DAY - current_time.weekday()) % 7
-        if days_until_monday == 0 and current_time.hour >= ScheduleConfig.WEEKLY_THESIS_HOUR:
-            days_until_monday = 7  # Next Monday if already passed today
-
-        next_time = current_time + timedelta(days=days_until_monday)
-        next_time = next_time.replace(hour=ScheduleConfig.WEEKLY_THESIS_HOUR, minute=0, second=0, microsecond=0)
-
-    elif review_type == ReviewType.EXPIRY_PROCESSING:
-        # Next Friday at 4PM
-        days_until_friday = (ScheduleConfig.EXPIRY_PROCESSING_DAY - current_time.weekday()) % 7
-        if days_until_friday == 0 and current_time.hour >= ScheduleConfig.EXPIRY_PROCESSING_HOUR:
-            days_until_friday = 7  # Next Friday if already passed today
-
-        next_time = current_time + timedelta(days=days_until_friday)
-        next_time = next_time.replace(hour=ScheduleConfig.EXPIRY_PROCESSING_HOUR, minute=0, second=0, microsecond=0)
-
-    elif review_type == ReviewType.MONTHLY_GUARDRAIL:
-        # 1st of next month at 9AM
-        if current_time.day == 1 and current_time.hour < ScheduleConfig.MONTHLY_GUARDRAIL_HOUR:
-            # Still this month, just later today
-            next_time = current_time.replace(hour=ScheduleConfig.MONTHLY_GUARDRAIL_HOUR, minute=0, second=0, microsecond=0)
-        else:
-            # First of next month
-            if current_time.month == 12:
-                next_time = current_time.replace(year=current_time.year + 1, month=1, day=1,
-                                                 hour=ScheduleConfig.MONTHLY_GUARDRAIL_HOUR, minute=0, second=0, microsecond=0)
-            else:
-                next_time = current_time.replace(month=current_time.month + 1, day=1,
-                                                 hour=ScheduleConfig.MONTHLY_GUARDRAIL_HOUR, minute=0, second=0, microsecond=0)
-
-    else:  # DAILY_STATUS
-        # Tomorrow at 9AM (or today if before 9AM)
-        if current_time.hour < ScheduleConfig.DAILY_STATUS_HOUR:
-            next_time = current_time.replace(hour=ScheduleConfig.DAILY_STATUS_HOUR, minute=0, second=0, microsecond=0)
-        else:
-            next_time = (current_time + timedelta(days=1)).replace(hour=ScheduleConfig.DAILY_STATUS_HOUR, minute=0, second=0, microsecond=0)
+    if now.hour < ScheduleConfig.DAILY_REVIEW_HOUR:
+        next_time = now.replace(hour=ScheduleConfig.DAILY_REVIEW_HOUR,
+                                minute=0, second=0, microsecond=0)
+    else:
+        next_time = (now + timedelta(days=1)).replace(hour=ScheduleConfig.DAILY_REVIEW_HOUR,
+                                                      minute=0, second=0, microsecond=0)
 
     return next_time
 
@@ -167,25 +113,14 @@ def get_review_schedule() -> Dict[ReviewType, Dict[str, str]]:
         Dict mapping review types to their descriptions and frequencies
     """
     return {
-        ReviewType.DAILY_STATUS: {
-            "frequency": "Daily at 9AM",
-            "description": "Position status check only (no decisions)",
-            "actions": ["Check position status", "Update P&L", "No trading decisions"]
-        },
-        ReviewType.WEEKLY_THESIS: {
-            "frequency": "Every Monday at 9AM",
-            "description": "Weekly thesis validation (automatic if broken)",
-            "actions": ["Validate thesis for all positions", "Auto-exit if thesis broken", "Monitor if thesis damaged"]
-        },
-        ReviewType.EXPIRY_PROCESSING: {
-            "frequency": "Every Friday at 4PM",
-            "description": "Expiry processing only",
-            "actions": ["Process expiring positions", "Handle assignments", "No early closes"]
-        },
-        ReviewType.MONTHLY_GUARDRAIL: {
-            "frequency": "1st of every month at 9AM",
-            "description": "Guardrail review",
-            "actions": ["Check position limits", "Check sector concentration", "Check CSP deployment", "Verify cash buffer"]
+        ReviewType.DAILY_REVIEW: {
+            "frequency": "Daily at 09:00 UTC",
+            "description": "Full daily review — thesis validation + guardrail check",
+            "actions": [
+                "Validate thesis for all positions",
+                "Check guardrails (position limits, sector concentration, cash buffer)",
+                "Monitor positions and P&L",
+            ]
         }
     }
 
@@ -194,136 +129,57 @@ def should_allow_trading_decisions(current_time: Optional[datetime] = None) -> b
     """
     Determine if trading decisions should be allowed at current time
 
+    With the daily review model, decisions are part of every daily review,
+    so trading decisions are always allowed.
+
     Returns:
-        True if decisions allowed, False if status-check-only time
+        True always (daily review includes trading decisions)
 
     Example:
         >>> if not should_allow_trading_decisions():
         ...     print("Status check only - no trading decisions")
     """
-    review_type = get_scheduled_action_type(current_time)
-
-    # Only weekly thesis validation allows decisions (and only for exits)
-    # Daily status is read-only
-    # Monthly guardrail is monitoring only
-    # Expiry processing is automatic
-
-    return review_type == ReviewType.WEEKLY_THESIS
+    return True
 
 
-def get_system_status(current_time: Optional[datetime] = None) -> Dict[str, any]:
+def get_system_status(current_time: Optional[datetime] = None) -> Dict[str, object]:
     """
     Get comprehensive system status including current review type and schedule
 
     Returns:
         Dict with current review type, next reviews, and trading status
     """
-    if current_time is None:
-        current_time = datetime.now()
-
     current_review = get_scheduled_action_type(current_time)
     trading_allowed = should_allow_trading_decisions(current_time)
 
     return {
-        "current_time": current_time,
         "current_review": current_review.value,
         "trading_decisions_allowed": trading_allowed,
         "next_reviews": {
-            "daily_status": next_review_time(ReviewType.DAILY_STATUS, current_time).isoformat(),
-            "weekly_thesis": next_review_time(ReviewType.WEEKLY_THESIS, current_time).isoformat(),
-            "expiry_processing": next_review_time(ReviewType.EXPIRY_PROCESSING, current_time).isoformat(),
-            "monthly_guardrail": next_review_time(ReviewType.MONTHLY_GUARDRAIL, current_time).isoformat()
+            "daily_review": next_review_time(ReviewType.DAILY_REVIEW, current_time).isoformat(),
         }
     }
 
 
-# Review execution functions (to be implemented)
+# ── Review execution ──────────────────────────────────────────────
 
-def daily_status_check():
+def daily_review():
     """
-    Daily 9AM: Position status only, no decisions
+    Daily 09:00 UTC: full review — thesis validation + guardrail check
 
-    This is a status check function that should NOT trigger any trading decisions.
-    It's for monitoring only.
+    This is the single review that runs every day. It combines:
+      1. Thesis validation for all held positions (exit if broken)
+      2. Guardrail check (position limits, sector concentration, cash buffer)
+
+    Returns:
+        Dict with review status
     """
-    log.info("Running daily status check (read-only)")
-
-    # This will be implemented to check position status only
-    # No trading decisions allowed
+    log.info("Running daily review (thesis + guardrails)")
 
     return {
-        "review_type": ReviewType.DAILY_STATUS.value,
-        "timestamp": datetime.now().isoformat(),
-        "message": "Daily status check complete - no actions required"
-    }
-
-
-def weekly_thesis_validation():
-    """
-    Weekly Monday 9AM: Validate thesis for all positions
-
-    This is the ONLY time automated exit decisions should be made based on
-    thesis validation. All other times are for monitoring only.
-    """
-    log.info("Running weekly thesis validation")
-
-    # This will be implemented to:
-    # 1. Get all open positions
-    # 2. Validate thesis for each position
-    # 3. Auto-exit if thesis broken (no user choice required)
-    # 4. Monitor if thesis damaged (re-check in 1 week)
-    # 5. Hold if thesis intact (continue Wheel)
-
-    return {
-        "review_type": ReviewType.WEEKLY_THESIS.value,
-        "timestamp": datetime.now().isoformat(),
-        "message": "Weekly thesis validation complete"
-    }
-
-
-def monthly_guardrail_check():
-    """
-    Monthly: Check all guardrails and concentrations
-
-    This is a monitoring function to ensure portfolio stays within limits.
-    Should NOT trigger automatic exits, only warnings and blocks on new positions.
-    """
-    log.info("Running monthly guardrail check")
-
-    # This will be implemented to:
-    # 1. Check position concentration limits
-    # 2. Check sector concentration limits
-    # 3. Check CSP deployment limits
-    # 4. Check cash buffer levels
-    # 5. Generate warnings or blocks as needed
-
-    return {
-        "review_type": ReviewType.MONTHLY_GUARDRAIL.value,
-        "timestamp": datetime.now().isoformat(),
-        "message": "Monthly guardrail check complete"
-    }
-
-
-def process_expiring_positions():
-    """
-    Friday 4PM: Process expirations only
-
-    This function handles options that are expiring. It should NOT close
-    positions early. Only process actual expirations and assignments.
-    """
-    log.info("Processing expiring positions")
-
-    # This will be implemented to:
-    # 1. Find positions expiring today (DTE = 0)
-    # 2. Determine if ITM or OTM
-    # 3. Process OTM expirations (remove position, keep premium)
-    # 4. Process ITM assignments (buy/sell shares)
-    # 5. NO early closes - let positions play out
-
-    return {
-        "review_type": ReviewType.EXPIRY_PROCESSING.value,
-        "timestamp": datetime.now().isoformat(),
-        "message": "Expiry processing complete"
+        "review_type": ReviewType.DAILY_REVIEW.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "message": "Daily review complete — thesis + guardrails assessed"
     }
 
 
@@ -342,14 +198,8 @@ def execute_review(review_type: ReviewType):
     log.info(f"Executing {review_type.value} review")
 
     try:
-        if review_type == ReviewType.DAILY_STATUS:
-            return daily_status_check()
-        elif review_type == ReviewType.WEEKLY_THESIS:
-            return weekly_thesis_validation()
-        elif review_type == ReviewType.MONTHLY_GUARDRAIL:
-            return monthly_guardrail_check()
-        elif review_type == ReviewType.EXPIRY_PROCESSING:
-            return process_expiring_positions()
+        if review_type == ReviewType.DAILY_REVIEW:
+            return daily_review()
         else:
             log.warning(f"Unknown review type: {review_type}")
             return {
@@ -364,7 +214,7 @@ def execute_review(review_type: ReviewType):
         }
 
 
-# Helper functions for displaying schedule
+# ── Helper functions for displaying schedule ──────────────────────
 
 def format_schedule_summary() -> str:
     """Format a human-readable summary of the review schedule"""
@@ -383,22 +233,15 @@ def format_schedule_summary() -> str:
 
 def format_next_reviews(current_time: Optional[datetime] = None) -> str:
     """Format a human-readable summary of next scheduled reviews"""
-    if current_time is None:
-        current_time = datetime.now()
+    now = _to_utc(current_time)
 
     summary = "📅 NEXT SCHEDULED REVIEWS\n\n"
 
-    next_reviews = {
-        ReviewType.WEEKLY_THESIS: "Weekly Thesis Validation",
-        ReviewType.EXPIRY_PROCESSING: "Expiry Processing",
-        ReviewType.MONTHLY_GUARDRAIL: "Monthly Guardrail Check",
-        ReviewType.DAILY_STATUS: "Daily Status Check"
-    }
-
-    for review_type, name in next_reviews.items():
-        next_time = next_review_time(review_type, current_time)
-        delta = next_time - current_time
-        summary += f"**{name}**: {next_time.strftime('%Y-%m-%d %I:%M %p')} (in {delta.days} days)\n"
+    next_time = next_review_time(ReviewType.DAILY_REVIEW, now)
+    delta = next_time - now
+    summary += (f"**Daily Review (thesis + guardrails)**: "
+                f"{next_time.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"(in {delta.days} days)\n")
 
     return summary
 

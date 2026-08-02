@@ -62,7 +62,8 @@ def _pos(ticker='AVGO', type='PUT', strike=350.0, expiry='2099-01-01', qty=-1, c
 def test_option_70pct_profit_close():
     s, dec = _score_option(_pos(), _opt(dte=40), profit_captured=75.0, pl=700,
                            today=TODAY, yf_client=None)
-    assert 'CLOSE' in dec and '70%' in dec
+    # With no trend context, 75% exceeds the 50% base target → CLOSE.
+    assert 'CLOSE' in dec and '75%' in dec
     assert s <= 3.0   # strongly improved
 
 

@@ -40,7 +40,8 @@ HKD_TO_USD = 7.8
 class Funds:
     """Account funds (USD-normalized)."""
     cash: float = 0.0                 # us_cash
-    buying_power: float = 0.0         # moomoo `power` (max buying power, margin-inclusive)
+    buying_power: float = 0.0         # usd_net_cash_power — cash-only BP (matches moomoo display)
+    margin_power: float = 0.0         # moomoo `power` — margin-inclusive BP (cash + securities)
     fund: float = 0.0                 # fund_assets (USD)
     total_assets: float = 0.0
     total_liabilities: float = 0.0
@@ -129,18 +130,37 @@ def _finite(v) -> float:
     return 0.0 if math.isnan(x) else x
 
 
-def _buying_power(f, currency: str) -> float:
-    """Max buying power (USD).
+def _to_usd(raw: float, currency: str) -> float:
+    """Normalize a moomoo accinfo money field to USD.
 
-    Prefers moomoo's margin-inclusive ``power`` (purchasing power against cash +
-    securities) over ``usd_net_cash_power`` (cash-only), which understates the
-    real buying power for an account holding stock. HKD account-currency power
-    is converted to USD.
+    Moomoo reports several accinfo fields (total_assets, total_liabilities,
+    net_assets, power) in the *account currency* — which is HKD for many accounts.
+    Reading them raw inflates USD figures ~7.8×. This applies the HKD→USD
+    conversion when the account currency is HKD.
     """
-    power = _finite(f.get('power'))
-    if power > 0:
-        return power / HKD_TO_USD if currency == 'HKD' else power
-    return _finite(f.get('usd_net_cash_power'))
+    if currency == 'HKD' and raw:
+        return raw / HKD_TO_USD
+    return raw or 0.0
+
+
+def _buying_power(f, currency: str) -> float:
+    """Cash buying power (USD) — what moomoo displays as 'Buying Power'.
+
+    This is ``usd_net_cash_power`` (cash-only purchasing power, no margin),
+    normalized to USD. It matches the figure the moomoo app shows. The
+    margin-inclusive ``power`` is exposed separately via ``_margin_power`` for
+    accounts that want to see total purchasing power against securities.
+    """
+    return _to_usd(_finite(f.get('usd_net_cash_power')), currency)
+
+
+def _margin_power(f, currency: str) -> float:
+    """Margin-inclusive purchasing power (USD) — ``power`` if moomoo returns it.
+
+    Purchasing power against cash + securities. 0 when unavailable (the cash-only
+    buying_power should be used instead). Normalized to USD.
+    """
+    return _to_usd(_finite(f.get('power')), currency)
 
 
 def fetch_funds(trd) -> Funds:
@@ -160,10 +180,11 @@ def fetch_funds(trd) -> Funds:
         return Funds(
             cash=_finite(f.get('us_cash')),
             buying_power=_buying_power(f, currency),
+            margin_power=_margin_power(f, currency),
             fund=_normalize_fund(float(f.get('fund_assets', 0) or 0), currency),
-            total_assets=float(f.get('total_assets', 0) or 0),
-            total_liabilities=float(f.get('total_liabilities', 0) or 0),
-            net_assets=float(f.get('net_assets', 0) or 0),
+            total_assets=_to_usd(_finite(f.get('total_assets')), currency),
+            total_liabilities=_to_usd(_finite(f.get('total_liabilities')), currency),
+            net_assets=_to_usd(_finite(f.get('net_assets')), currency),
             margin_used_pct=float(f.get('margin_used_pct', 0) or 0),
             currency=currency,
         )

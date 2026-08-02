@@ -124,24 +124,44 @@ def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
 
 
 def _score_option(pos: dict, current, profit_captured: float, pl: float,
-                  today: date, yf_client) -> tuple[float, str]:
-    """Score an option position 1-10. Returns (score, decision)."""
+                  today: date, yf_client, trend_ctx=None, capital_scarcity=None) -> tuple[float, str]:
+    """Score an option position 1-10. Returns (score, decision).
+
+    Profit booking is delegated to src.analysis.profit_management.decide_profit_target
+    (trend-modulated per specs/profit-loss-management-spec.md). With trend_ctx=None
+    it falls back to the flat 50%/70% close behavior (backward compatible).
+    Loss-side logic (stop tiers, delta gates, thesis catch-all) runs unchanged.
+    """
     score = 5.0
     decision = 'HOLD'
     dte = current.dte or 0
     delta = abs(current.delta or 0)
     strategy = 'CC' if pos['type'] == 'CALL' else 'CSP'
 
-    # Profit captured — close at 50%+
-    if profit_captured >= 70:
-        score -= 2.0
-        decision = '✅ CLOSE (70%+ profit)'
-    elif profit_captured >= 50:
+    # Profit captured — trend-modulated target (spec §4.2)
+    from src.analysis.profit_management import decide_profit_target, ProfitDecision
+    pd = decide_profit_target(strategy, profit_captured, dte, delta, trend_ctx, capital_scarcity)
+    if pd.action == ProfitDecision.ACTION_CLOSE:
+        # Deeper profit past target = more "decided" (preserves the old 70%→-2.0
+        # signal that a deeply-profitable close is stronger than a base-target one).
+        score -= 2.0 if profit_captured >= 70 else 1.5
+        decision = f'✅ CLOSE ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% target)'
+    elif pd.action == ProfitDecision.ACTION_MANAGE_DTE:
         score -= 1.5
-        decision = '✅ CLOSE (50%+ profit)'
+        decision = '📅 MANAGE DTE — close/roll/assign (21-DTE floor)'
+    elif pd.action == ProfitDecision.ACTION_ROLL_DOWN_OUT:
+        score -= 1.0  # winner: don't flag as urgently as a flat close
+        decision = f'🔄 ROLL DOWN-OUT ({profit_captured:.0f}% ≥ {pd.target_pct:.0f}% trend target — credit only)'
+    elif pd.action == ProfitDecision.ACTION_ROLL_UP_OUT:
+        score -= 1.0
+        decision = f'🔄 ROLL UP-OUT (CC winner, uptrend — keep shares, credit only)'
     elif profit_captured >= 30:
         score -= 0.5
-        decision = '👍 HOLD (30%+ captured)'
+        decision = (f'👍 HOLD ({profit_captured:.0f}% < {pd.target_pct:.0f}% target'
+                    + (f', trend-extended' if pd.extended_by_trend else '') + ')')
+    else:
+        decision = (f'HOLD ({profit_captured:.0f}% < {pd.target_pct:.0f}% target'
+                    + (f', trend-extended' if pd.extended_by_trend else '') + ')')
 
     # DTE check — 21 DTE is a universal management point, not just for losers
     # (gamma roughly doubles 21→7 DTE; playbook §3)

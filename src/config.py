@@ -300,6 +300,26 @@ class Config:
         return {str(t).upper().replace('US.', '') for t in raw}
 
     # ═══════════════════════════════════════════════════════════
+    # TREND-MODULATED PROFIT BOOKING (specs/profit-loss-management-spec.md)
+    # ═══════════════════════════════════════════════════════════
+
+    def profit_take(self, key: str, default=None):
+        """Top-level profit_take param. e.g., profit_take('dte_floor') → 21"""
+        return self._data.get('profit_take', {}).get(key, default)
+
+    def profit_take_csp(self, key: str, default=None):
+        """CSP profit-booking param. e.g., profit_take_csp('strong_trend_target_pct') → 85"""
+        return self._data.get('profit_take', {}).get('csp', {}).get(key, default)
+
+    def profit_take_cc(self, key: str, default=None):
+        """CC profit-booking param. e.g., profit_take_cc('roll_up_out_on_trend') → true"""
+        return self._data.get('profit_take', {}).get('cc', {}).get(key, default)
+
+    def profit_take_trend(self, key: str, default=None):
+        """Trend-input threshold. e.g., profit_take_trend('strong_trend_composite_min') → 70"""
+        return self._data.get('profit_take', {}).get('trend_inputs', {}).get(key, default)
+
+    # ═══════════════════════════════════════════════════════════
     # CC MANAGEMENT
     # ═══════════════════════════════════════════════════════════
 

@@ -431,7 +431,7 @@ def _generate_recommended_action(ticker: str, status: ThesisStatus, checks: List
         return (
             f"⚠️  THESIS DAMAGED — Monitor {ticker}\n"
             f"Concerns: {reasons}\n"
-            f"Action: Weekly monitoring, re-evaluate in 7 days"
+            f"Action: Daily monitoring — thesis + guardrails reviewed at 09:00 UTC"
         )
 
     else:

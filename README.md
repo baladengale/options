@@ -180,7 +180,7 @@ options/
 │   ├── test_portfolio_loader.py       # Portfolio loader tests
 │   ├── test_portfolio_summary.py      # P&L/income/sector computation tests
 │   ├── test_holdings_exit.py          # Exit framework tests
-│   └── ...                            # 574 tests (511 offline unit + integration/infrastructure)
+│   └── ...                            # 620 tests (557 offline unit + integration/infrastructure)
 ├── docs/                              # Research docs + implementation guides
 ├── .claude/skills/                    # Claude Code skills (oie, oie-paper)
 ├── CLAUDE.md                          # AI coding instructions
@@ -359,25 +359,36 @@ Only the weekly thesis review allows automated exit decisions. All other times a
 
 ---
 
-## Do-Not-Wheel List
+## Wheel Eligibility (daily check)
 
-Stocks with broken theses are added to a persistent exclusion list (`config/do_not_wheel.yaml`) for 6 months. The screener automatically skips excluded tickers.
+**The watchlist is the master list.** Instead of maintaining a local blacklist, the engine runs a simple, **read-only daily eligibility check** that auto-skips clear loss-makers. You curate the watchlist directly when something is "consistently bad" — that's the single source of truth.
 
-```python
-from src.data.do_not_wheel_list import DoNotWheelList
+`is_wheel_eligible(snapshot)` (in `src/data/do_not_wheel_list.py`) uses **moomoo snapshot data only** — `net_profit`, `eps_ttm`, `pe_ratio` — so it's fast, runs every day, and has no yfinance dependency. A stock is **not eligible** (skipped by the screener) only when it's an objective loss-maker:
 
-dnl = DoNotWheelList()
-dnl.add('BE', months=6, reason='P/E -456 — fundamentals broken')
-dnl.is_excluded('BE')  # → True for 6 months, then auto-expires
-```
+| Condition | Why | Config toggle |
+|-----------|-----|---------------|
+| `net_profit < 0` **AND** `eps_ttm < 0` | Clear loss-maker (both signals agree) | `unprofitable_block: true` |
+| `pe_ratio < 0` | Negative P/E = company losing money | `pe_negative_critical: true` |
 
-Integrated into `scripts/screener.py` as a pre-filter before scoring. Stocks on the list are skipped with a log message showing the reason and expiration date.
-
-**Auto-recovery**: a ticker is also *removed* early when its thesis recovers — not just after the 6-month clock. Each `--thesis` run re-validates every listed ticker and removes any whose status returns to `recovery_status_for_removal` (default `INTACT`). So a stock that heals next week re-enters the wheel immediately; only tickers never re-validated rely on the 6-month expiry as a safety net.
+A single bad quarter (net loss but EPS still positive, or vice versa) does **not** trigger a block — that's often a one-off charge, not a broken business. Profitable high-growth names (AMD, PLTR, TSLA) are **eligible** despite high P/E: the old flat "P/E > 100 = blocked" rule is gone.
 
 ```yaml
-thesis_validation:
-  recovery_status_for_removal: INTACT   # INTACT (default) or DAMAGED
+# config/rules.yaml → thesis_validation
+unprofitable_block: true     # skip when net_profit < 0 AND eps_ttm < 0
+pe_negative_critical: true   # skip when P/E < 0
+```
+
+**Where it runs:**
+- **Screener** — ineligible tickers are skipped before scoring (using the snapshot already fetched — zero extra API calls).
+- **`portfolio.py --thesis`** — each ticker shows an `[eligible]` / `[NOT eligible]` tag so you see at a glance which names are wheelable today.
+
+**Manual override (optional):** `config/do_not_wheel.yaml` remains as a hand-edited force-skip for temporary exclusions. The engine no longer writes to it automatically — you stay in control of the list.
+
+```python
+from src.data.do_not_wheel_list import is_wheel_eligible, DoNotWheelList
+
+eligible, reason = is_wheel_eligible(snapshot)   # read-only daily check
+DoNotWheelList().is_excluded('BE')               # manual override (hand-edited file)
 ```
 
 ---
@@ -1533,6 +1544,23 @@ At 21 DTE: if position is tested and rolling pays net credit → roll to 45 DTE.
 
 ---
 
+## Profit & Loss Decision System
+
+The engine's exit decisions are **trend-modulated**, not flat. The core insight is a **strategy-direction asymmetry**: an uptrend *helps* a short put (stock runs away from strike → decay accelerates) but *hurts* a short call (stock runs into strike → upside capped). So the 50% profit target is **conditional** on regime, not unconditional.
+
+| Strategy | Uptrend effect | Engine response |
+|----------|----------------|-----------------|
+| **CSP** (short put) | Trend **helps** → decay accelerates, delta → 0 | **Extend** target to 70% (confirmed trend) or 85% (strong trend + sentiment + IV); roll down-and-out for credit at the target |
+| **CC** (short call) | Trend **hurts** → delta+gamma climb, upside capped | **Never extend** (stay 50%); instead **roll up-and-out** for credit to keep shares + recapture upside |
+
+**Hard gates override every extension**: DTE ≤ 21 (gamma floor), capital SCARCE (book at base 50%), earnings in DTE (close before). Loss-side rules (premium-multiple stops, delta gates, roll-first discipline) are unchanged — the system adds only a 2×-alert trend overlay.
+
+**Surfaces**: the real portfolio (`--health`) **recommends** rolls and trend-aware targets (no live orders — repo rule); the screener hints at held winners to roll; the OIE paper engine **paper-executes** rolls and trend holds. All three share one decision core (`src/analysis/profit_management.py`) and the same `_trend_composite` the entry layer scores on.
+
+→ **Full system documented in [`docs/profit-loss-management.md`](docs/profit-loss-management.md)** (decision matrix, rolling-winner lane, loss integration, config, worked example). Config: `config/rules.yaml` → `profit_take:`.
+
+---
+
 ## Deployment
 
 ### Prerequisites
@@ -1676,7 +1704,7 @@ This fixed a discrepancy where covered-call premium was misclassified as stock s
 ```bash
 # Unit suite — deterministic, no network needed (CI runs exactly this):
 pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
-              --ignore=tests/performance -m "not slow"          # 511 passed
+              --ignore=tests/performance -m "not slow"          # 557 passed
 
 # With coverage:
 pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
@@ -1685,13 +1713,13 @@ pytest tests/ --ignore=tests/integration --ignore=tests/infrastructure \
 # Everything (incl. integration/infrastructure). Some tests in
 # tests/integration + tests/infrastructure make live moomoo/yfinance calls
 # and need OpenD + network — run them with the services up, or -m "not slow".
-pytest tests/                                                    # 574 collected
+pytest tests/                                                    # 620 collected
 ```
 
 `pytest-timeout` is required (declared in `requirements-dev.txt`) — `pytest.ini`
 sets a 300s per-test cap and registers the `timeout` marker.
 
-**Unit test breakdown** (~511 tests, all offline):
+**Unit test breakdown** (~557 tests, all offline):
 
 | File | Tests | Coverage |
 |------|:-----:|----------|
@@ -1710,7 +1738,9 @@ sets a 300s per-test cap and registers the `timeout` marker.
 | `test_portfolio_summary.py` | 16 | Income classification (option-first), monthly, sector, breakdown, P&L |
 | `test_holding_score.py` | 16 | Option decisions, stop tiers, delta gates, CC hunting |
 | `test_screener_score.py` | 7 | Shim re-exports, RoC, score stars, reason bands |
-| `test_portfolio_thesis_unified.py` | 10 | Unified thesis set (stocks∪options∪watchlist), DNL auto-recovery |
+| `test_profit_management.py` | 28 | Trend-modulated profit matrix (CSP/CC asymmetry), rolls, loss overlay |
+| `test_portfolio_thesis_unified.py` | 10 | Unified thesis set (stocks∪options∪watchlist) |
+| `test_eligibility.py` | 12 | Daily Wheel eligibility (loss-maker filter, moomoo-only) |
 | `test_portfolio_monthly_guardrail.py` | 6 | Monthly order bucketing (`_filled_orders_this_month`) |
-| `test_portfolio_summary.py` | 8 | Income, sector breakdown, unrealized P&L |
+| `test_portfolio_summary.py` | 16 | Income classification (option-first), monthly, sector, breakdown, P&L |
 | `test_overlap.py` | 9 | Straddle/strangle detection, stacked calls, net scenarios |

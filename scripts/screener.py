@@ -37,7 +37,7 @@ from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
 from src.data.models import StockSnapshot, OptionSnapshot, TradeCandidate
 from src.data.watchlist import fetch_live_watchlist
-from src.data.do_not_wheel_list import DoNotWheelList
+from src.data.do_not_wheel_list import DoNotWheelList, is_wheel_eligible
 from src.filters.contract_filters import passes_all_gates, cc_roc
 from src.analysis.sentiment import (
     get_macro_context, get_ticker_sentiment, get_watchlist_sentiment,
@@ -142,12 +142,20 @@ def main():
                 log.debug(f"  {short}: SKIP — spread {snap.bid_ask_spread_pct:.1f}% > 5%")
                 continue
 
-            # Pre-filter: skip Do-Not-Wheel list tickers
-            dnl = DoNotWheelList()
-            if dnl.is_excluded(short):
-                expiration = dnl.get_expiration(short)
-                reason = dnl.get_reason(short)
-                log.debug(f"  {short}: SKIP — Do-Not-Wheel list until {expiration}: {reason}")
+            # Pre-filter: Wheel eligibility (read-only daily check).
+            # Uses moomoo snapshot data (net_profit + eps_ttm) already fetched —
+            # skips clear loss-makers automatically. The watchlist is the master
+            # list; do_not_wheel.yaml remains a manual override below.
+            eligible, inelig_reason = is_wheel_eligible(snap, short)
+            if not eligible:
+                log.debug(f"  {short}: SKIP — {inelig_reason}")
+                continue
+
+            # Manual override: honor a hand-edited do_not_wheel.yaml (still supported).
+            if DoNotWheelList().is_excluded(short):
+                expiration = DoNotWheelList().get_expiration(short)
+                reason = DoNotWheelList().get_reason(short)
+                log.debug(f"  {short}: SKIP — manual override until {expiration}: {reason}")
                 continue
 
             history = moomoo.get_price_history(ticker, 252)
@@ -330,6 +338,17 @@ def main():
         print(f"\n  ⚠️  {regime} regime — favor CC over CSP, reduce position size by 25-50%")
     if regime == 'BULLISH':
         print(f"\n  ✅ BULLISH regime — CSP premium is favorable, assignment risk lower")
+
+    # ── Exit-management hint for tickers already held (trend-modulated rolls) ──
+    # If a top candidate's ticker is one you already have an open option on, a
+    # winning position there may be worth rolling (down-and-out CSP / up-and-out
+    # CC) instead of flat-closing — see specs/profit-loss-management-spec.md §4.3.
+    held_in_top = [c for c in top if c.ticker in EXISTING_OPTIONS]
+    if held_in_top:
+        tickers = ', '.join(sorted({c.ticker for c in held_in_top}))
+        print(f"\n  🔄 HELD WINNERS in trend: {tickers}")
+        print(f"     If any open position here is ≥50% captured, consider a net-credit roll")
+        print(f"     (down-and-out CSP / up-and-out CC) to bank profit + stay in the thesis.")
 
     # ── Log top picks for backtesting / paper tracking ──
 

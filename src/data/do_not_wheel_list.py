@@ -295,6 +295,64 @@ def add_to_do_not_wheel_list(ticker: str, months: int = 6, reason: str = "Thesis
     dnl.add(ticker, months=months, reason=reason)
 
 
+def is_wheel_eligible(snapshot, ticker: str = '') -> tuple:
+    """Can we run the Wheel on this stock today? Read-only, daily check.
+
+    The watchlist is the master list — this filter only auto-skips *clear,
+    objective* loss-makers so they never get screened. It uses moomoo snapshot
+    data only (``net_profit`` + ``eps_ttm`` + ``pe_ratio``), so it is fast and
+    has no yfinance dependency. Curate the watchlist directly for anything
+    subjective ("consistently bad"); use ``do_not_wheel.yaml`` only as a manual
+    override.
+
+    Blocks when (each toggle-able via ``thesis_validation`` in rules.yaml):
+      - ``unprofitable_block``: ``net_profit < 0`` AND ``eps_ttm < 0`` (loss-maker)
+      - ``pe_negative_critical``: ``pe_ratio < 0`` (negative P/E = losing money)
+
+    Args:
+        snapshot: a StockSnapshot (moomoo) with ``net_profit``, ``eps_ttm``,
+            ``pe_ratio`` fields. Duck-typed — only the fields it reads.
+        ticker: optional ticker for the reason string.
+
+    Returns:
+        (eligible: bool, reason: str). ``eligible=True`` → proceed to screen.
+    """
+    def _val(name):
+        v = getattr(snapshot, name, None) if snapshot is not None else None
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        from src.config import get_config
+        cfg = get_config()
+        block_unprofitable = cfg.thesis_validation('unprofitable_block', True)
+        block_neg_pe = cfg.thesis_validation('pe_negative_critical', True)
+    except Exception:
+        block_unprofitable, block_neg_pe = True, True
+
+    net_profit = _val('net_profit')
+    eps_ttm = _val('eps_ttm')
+    pe_ratio = _val('pe_ratio')
+    label = ticker or getattr(snapshot, 'ticker', '') or ''
+
+    # Unprofitable: net loss AND negative trailing EPS (a clear loss-maker).
+    # One negative quarter (net_profit<0 but eps still positive, or vice versa)
+    # is NOT enough — that's often a one-off charge, not a broken business.
+    if block_unprofitable and net_profit is not None and eps_ttm is not None:
+        if net_profit < 0 and eps_ttm < 0:
+            return False, (f"{label}: not eligible — unprofitable "
+                           f"(net profit ${net_profit:,.0f}, EPS {eps_ttm:.2f})")
+
+    # Negative P/E is the same loss-maker signal expressed via valuation.
+    if block_neg_pe and pe_ratio is not None and pe_ratio < 0:
+        return False, (f"{label}: not eligible — negative P/E ({pe_ratio:.1f}, "
+                       f"company losing money)")
+
+    return True, ""
+
+
 if __name__ == "__main__":
     # Test the Do-Not-Wheel list
     print("=" * 60)

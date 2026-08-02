@@ -329,10 +329,10 @@ def generate_option_decision_message(position: dict) -> str:
 
     # Standard Monitoring (7-21 DTE)
     if 7 <= dte <= 21:
-        return "📋 Position On Track — Weekly monitoring scheduled"
+        return "📋 Position On Track — Daily review covers thesis + guardrails"
 
     # Long-Term (> 21 DTE)
     if dte > 21:
-        return "📊 Long-Term Position — Monthly review scheduled"
+        return "📊 Long-Term Position — Daily review covers thesis + guardrails"
 
     return "✅ Position Status — No action required"

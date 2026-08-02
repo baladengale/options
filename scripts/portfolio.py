@@ -34,7 +34,7 @@ from moomoo import RET_OK
 from src.logging_setup import get_logger
 log = get_logger('portfolio')
 
-from src.data.portfolio_loader import fetch_portfolio_and_orders
+from src.data.portfolio_loader import fetch_portfolio_and_orders, is_option_code
 from src.data.moomoo_client import MoomooClient
 from src.data.yfinance_client import YFinanceClient
 from src.data.compute import enrich_stock_snapshot
@@ -43,9 +43,10 @@ from src.guardrails.limits import GuardrailChecker as StagedGuardrails
 from src.config import get_config
 from src.risk.holdings_exit import evaluate_holding_exit, sma_slope, months_to_recover
 from src.risk.overlap import analyze_overlap
+from src.analysis.profit_management import TrendContext, trend_context_from_snapshot
 from src.analysis.thesis import evaluate_thesis, fetch_thesis_inputs
 from src.analysis.thesis_validator import validate_investment_thesis, ThesisStatus
-from src.data.do_not_wheel_list import DoNotWheelList
+from src.data.do_not_wheel_list import DoNotWheelList, is_wheel_eligible
 from src.system.scheduler import (
     get_scheduled_action_type, get_system_status, should_allow_trading_decisions,
 )
@@ -146,8 +147,9 @@ def main():
 
     # ── HEALTH (decisions + overlap + guardrails) ──
     violations = []
+    roll_recs = []
     if 'health' in sections:
-        violations = _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv)
+        violations, roll_recs = _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv)
 
     # ── TIMELINE (systematic review schedule) ──
     if 'timeline' in sections:
@@ -167,7 +169,7 @@ def main():
         stage = _determine_recovery_stage(pf, nlv)
         trading_allowed = should_allow_trading_decisions()
         _print_recommendations(pf, orders, nlv, thesis_results, violations,
-                               stage, trading_allowed)
+                               stage, trading_allowed, roll_recs)
 
     log.info(f"PORTFOLIO|regime={regime}|stocks={len(pf.stocks)}|options={len(pf.options)}|"
              f"nlv=${nlv:,.0f}|liquid=${pf.funds.liquid:,.0f}|sections={','.join(sorted(sections))}")
@@ -185,13 +187,17 @@ def _print_funds(pf):
     print(f"  US Cash:            ${f.cash:>14,.2f}")
     print(f"  Fund Assets:        ${f.fund:>14,.2f}")
     print(f"  Liquid (cash+fund): ${f.liquid:>14,.2f}")
-    print(f"  Buying Power:       ${f.buying_power:>14,.2f}")
+    print(f"  Buying Power:       ${f.buying_power:>14,.2f}  (cash-only — matches moomoo)")
+    if f.margin_power > 0 and f.margin_power != f.buying_power:
+        print(f"  Margin BP:          ${f.margin_power:>14,.2f}  (cash + securities)")
     print(f"  Total Assets:       ${f.total_assets:>14,.2f}")
     print(f"  Total Liabilities:  ${f.total_liabilities:>14,.2f}")
     print(f"  Net Assets:         ${f.net_assets:>14,.2f}")
     print(f"  Margin Used:        {f.margin_used_pct:>13.1f}%")
     print(f"  Net Liquidation:    ${pf.net_liquidation:>14,.2f}")
     print(f"  CSP Liability:      ${pf.csp_liability:>14,.0f}  (cash needed if all puts assign)")
+    if f.currency:
+        print(f"  Account Currency:   {f.currency}")
     print()
 
 
@@ -223,22 +229,50 @@ def _print_pnl(pf, orders, nlv, today):
         print(f"  📊 OPTION POSITIONS ({len(pf.options)})")
         print(f"{'='*90}")
         print(f"  {'Code':<26s} {'Qty':>5s} {'DTE':>4s} {'Strike':>8s} "
-              f"{'Cost':>8s} {'P&L':>10s} {'P&L%':>8s} {'Assign$':>10s}")
-        print(f"  {'-'*26} {'-'*5} {'-'*4} {'-'*8} {'-'*8} {'-'*10} {'-'*8} {'-'*10}")
+              f"{'Cost':>8s} {'P&L':>10s} {'P&L%':>8s} {'Assign$ (CC+/CSP-)':>18s}")
+        print(f"  {'-'*26} {'-'*5} {'-'*4} {'-'*8} {'-'*8} {'-'*10} {'-'*8} {'-'*18}")
+        # Assignment cash impact: CSP assign → pay strike (cash OUT, negative);
+        # CC assign → receive strike (cash IN, positive). Net shows the balance.
+        net_assign = 0.0
+        net_csp = 0.0
+        net_cc = 0.0
         for code in sorted(pf.options):
             o = pf.options[code]
             try:
                 dte = (date.fromisoformat(o['expiry']) - today).days
             except Exception:
                 dte = 0
-            assign = o['strike'] * abs(o['qty']) * 100 if o['type'] == 'PUT' else 0
+            notional = o['strike'] * abs(o['qty']) * 100
+            # CSP: cash spent to buy shares at strike (−); CC: cash received from shares called (+)
+            assign = -notional if o['type'] == 'PUT' else notional
+            if o['type'] == 'PUT':
+                net_csp += assign
+            else:
+                net_cc += assign
+            net_assign += assign
+            sign = '+' if assign >= 0 else '-'
             print(f"  {code:<26s} {o['qty']:>5,.0f} {dte:>4d} ${o['strike']:>7,.0f} "
-                  f"${o['cost']:>7,.2f} ${o['pl']:>9,.0f} {o['pl_pct']:>+7.1f}% ${assign:>9,.0f}")
-        print(f"  {'-'*26} {'-'*5} {'-'*4} {'-'*8} {'-'*8} ${unrealized_option_pl(pf.options):>9,.0f}")
+                  f"${o['cost']:>7,.2f} ${o['pl']:>9,.0f} {o['pl_pct']:>+7.1f}% "
+                  f"{sign}${abs(assign):>15,.0f}")
+        print(f"  {'-'*26} {'-'*5} {'-'*4} {'-'*8} {'-'*8} {'-'*10} {'-'*8} {'-'*18}")
+        print(f"  {'':>26s} {'':>5s} {'':>4s} {'':>8s} {'':>8s} ${unrealized_option_pl(pf.options):>9,.0f} "
+              f"{'':>8s} {'(unrealized)':>18s}")
+        print(f"  {'':>26s} {'':>5s} {'':>4s} {'':>8s} {'':>8s} {'':>10s} "
+              f"{'':>8s} {'CSP subtotal':<12s} -${abs(net_csp):>15,.0f}")
+        print(f"  {'':>26s} {'':>5s} {'':>4s} {'':>8s} {'':>8s} {'':>10s} "
+              f"{'':>8s} {'CC subtotal':<12s} +${net_cc:>15,.0f}")
+        net_sign = '+' if net_assign >= 0 else '-'
+        print(f"  {'':>26s} {'':>5s} {'':>4s} {'':>8s} {'':>8s} {'':>10s} "
+              f"{'':>8s} {'NET assign':<12s} {net_sign}${abs(net_assign):>15,.0f}")
+        print(f"  {'':>26s} {'':>5s} {'':>4s} {'':>8s} {'':>8s} {'':>10s} "
+              f"{'':>8s} {'':<12s} {'+ net = surplus cash | − net = cash gap':>17s}")
         print()
 
     # ── All-time income + monthly ──
     income = compute_income(orders)
+    option_orders = sum(1 for o in orders
+                        if o.get('status') in ('FILLED_ALL', 'FILLED_PART')
+                        and is_option_code(o.get('code', '')))
     print(f"{'='*90}")
     print(f"  💵 ALL-TIME OPTION INCOME")
     print(f"{'='*90}")
@@ -247,7 +281,8 @@ def _print_pnl(pf, orders, nlv, today):
     print(f"  NET OPTION INCOME: ${income.net_option_income:>12,.0f}")
     print(f"  Stock Bought:      ${income.stock_bought:>12,.0f}")
     print(f"  Stock Sold:        ${income.stock_sold:>12,.0f}")
-    print(f"  Filled Orders:     {income.filled_order_count:>12d}")
+    print(f"  Filled Orders:     {income.filled_order_count:>12d}  "
+          f"({option_orders} option · {income.filled_order_count - option_orders} stock, all-time)")
     print(f"  Unrealized Stock P&L:  ${unrealized_stock_pl(pf.stocks):>12,.0f}")
     print(f"  Unrealized Option P&L: ${unrealized_option_pl(pf.options):>12,.0f}")
 
@@ -350,9 +385,13 @@ def _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv):
         # ── Batch option snapshots (used by decisions + overlap) ──
         snap_map = _fetch_option_snapshots(moomoo, list(pf.options.keys()))
 
+        # ── Trend context per option underlying (for trend-modulated profit booking) ──
+        trend_map = _build_trend_map(pf, moomoo, yf_client)
+
         # ── Option decisions ──
+        roll_recs = []
         if pf.options:
-            _score_options(pf, snap_map, yf_client, today)
+            roll_recs = _score_options(pf, snap_map, yf_client, today, trend_map, nlv, pf)
 
         # ── Put/call overlap ──
         reports = analyze_overlap(pf.options, pf.stocks, snapshots=snap_map, today=today)
@@ -360,7 +399,51 @@ def _print_health(pf, orders, yf_client, regime, regime_mult, today, nlv):
             _print_overlap(reports, today)
 
     # ── Guardrails ──
-    return _print_guardrails(pf, orders, nlv)
+    violations = _print_guardrails(pf, orders, nlv)
+    return violations, roll_recs
+
+
+def _capital_scarcity(pf, nlv) -> str:
+    """Coarse capital-scarity label for the profit-booking gate (SCARCE/NORMAL/ABUNDANT)."""
+    if nlv <= 0:
+        return 'SCARCE'
+    cash_pct = pf.funds.liquid / nlv
+    slot_util = len(pf.options) / max(1, get_config().max_open_positions)
+    if slot_util < 0.25 and cash_pct >= 0.30:
+        return 'ABUNDANT'
+    if slot_util < 0.50 and cash_pct >= 0.20:
+        return 'NORMAL'
+    return 'SCARCE'
+
+
+def _build_trend_map(pf, moomoo, yf_client) -> dict:
+    """{ticker: TrendContext} for every option underlying, enriched once.
+
+    Reuses the shared _trend_composite so the exit layer sees the same 0-100
+    number the entry layer scored on. Best-effort: failures → no entry (caller
+    falls back to base-50% behavior for that ticker).
+    """
+    out: dict = {}
+    for ticker in pf.option_tickers:
+        try:
+            snap = moomoo.get_stock_snapshot(f'US.{ticker}')
+            if snap is None or snap.last_price <= 0:
+                continue
+            history = moomoo.get_price_history(f'US.{ticker}', 252)
+            if history:
+                enrich_stock_snapshot(snap, history)
+            sent_score = sent_dir = None
+            if yf_client:
+                try:
+                    ts = yf_client.get_ticker_sentiment(ticker)
+                    sent_score = getattr(ts, 'score', None)
+                    sent_dir = getattr(ts, 'direction', None)
+                except Exception:
+                    pass
+            out[ticker] = trend_context_from_snapshot(snap, sent_score, sent_dir)
+        except Exception as e:
+            log.debug(f"trend context build failed for {ticker}: {e}")
+    return out
 
 
 def _score_holdings(pf, moomoo, yf_client, cfg, regime, regime_mult, today):
@@ -442,7 +525,10 @@ def _fetch_option_snapshots(moomoo, codes):
     return snap_map
 
 
-def _score_options(pf, snap_map, yf_client, today):
+def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, portfolio=None):
+    trend_map = trend_map or {}
+    scarcity = _capital_scarcity(portfolio, nlv) if portfolio and nlv else None
+    roll_recs = []
     print(f"  📊 OPTION DECISIONS:")
     print(f"  {'Code':<26s} {'Qty':>5s} {'DTE':>4s} {'Δ':>7s} {'Bid':>7s} "
           f"{'Capt%':>7s} {'Score':>6s} {'Decision'}")
@@ -460,10 +546,16 @@ def _score_options(pf, snap_map, yf_client, today):
             continue
         bid = current.bid or 0
         profit_captured = ((pos['cost'] - bid) / pos['cost'] * 100) if pos['cost'] > 0 else 0
-        score, dec = _score_option(pos, current, profit_captured, pos.get('pl', 0), today, yf_client)
+        tctx = trend_map.get(pos.get('ticker'))
+        score, dec = _score_option(pos, current, profit_captured, pos.get('pl', 0), today,
+                                   yf_client, trend_ctx=tctx, capital_scarcity=scarcity)
         print(f"  {code:<26s} {pos['qty']:>5,.0f} {dte:>4d} {current.delta:>+6.3f} "
               f"${bid:>6,.2f} {profit_captured:>+6.1f}% {score:>5.1f}  {dec}")
+        # Collect roll-winner recommendations (recommend-only; net-credit + ≤2 rolls gate).
+        if 'ROLL' in dec:
+            roll_recs.append((pos.get('ticker', ''), dec))
     print()
+    return roll_recs
 
 
 def _print_overlap(reports, today):
@@ -603,7 +695,7 @@ def _print_timeline(pf, nlv):
     print(f"  Current Review:    {current_review.value}")
     print(f"  Trading Decisions: {'✅ ALLOWED' if trading_allowed else '❌ READ-ONLY'}")
     print(f"  Recovery Stage:    {stage}")
-    print(f"  Next scheduled reviews:")
+    print(f"  Next scheduled review:")
     for name, when in status['next_reviews'].items():
         print(f"    {name:<20s} {when[:19]}")
     print()
@@ -651,6 +743,25 @@ def _thesis_targets(pf) -> dict:
     return targets
 
 
+def _print_thesis_explanation(report, status, ticker):
+    """Render a thesis report's reason + action as right-aligned labeled lines.
+
+    Replaces the embedded-newline layout in report.recommended_action (which
+    wrapped messily) with a clean two-column format.
+    """
+    label_w = 10  # width of the right-aligned label column
+    if status == ThesisStatus.BROKEN:
+        crit = [c.message for c in report.checks if c.severity == "CRITICAL"]
+        reason = "; ".join(crit) if crit else "Thesis broken"
+        print(f"      {'Reason:':>{label_w}s} {reason}")
+        print(f"      {'Action:':>{label_w}s} Close position, add {ticker} to Do-Not-Wheel (6 months)")
+    elif status == ThesisStatus.DAMAGED:
+        warns = [c.message for c in report.checks if c.severity == "WARNING"]
+        concerns = "; ".join(warns) if warns else "Technical damage"
+        print(f"      {'Concerns:':>{label_w}s} {concerns}")
+        print(f"      {'Action:':>{label_w}s} Weekly monitoring, re-evaluate in 7 days")
+
+
 def _print_thesis(pf, yf_client) -> dict:
     """Validate the investment thesis for stocks + option underlyings + watchlist.
 
@@ -673,14 +784,7 @@ def _print_thesis(pf, yf_client) -> dict:
         print("  (no tickers to validate)\n")
         return {}
 
-    cfg = get_config()
-    recovery_status = cfg.thesis_validation('recovery_status_for_removal', 'INTACT')
-    recovery_ok = {ThesisStatus.INTACT}
-    if str(recovery_status).upper() == 'DAMAGED':
-        recovery_ok = {ThesisStatus.INTACT, ThesisStatus.DAMAGED}
-
     results = {}
-    dnl = DoNotWheelList()
     with MoomooClient() as moomoo:
         for ticker in sorted(targets):
             source = targets[ticker]
@@ -693,24 +797,23 @@ def _print_thesis(pf, yf_client) -> dict:
                 status = report.status
                 emoji = ("✅" if status == ThesisStatus.INTACT
                          else "⚠️" if status == ThesisStatus.DAMAGED else "🚨")
-                print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}")
+                # Read-only eligibility tag (moomoo snapshot) — shows whether the
+                # name is wheelable today. The watchlist is the master list; the
+                # engine no longer auto-mutates a blacklist file.
+                eligible, inelig_reason = is_wheel_eligible(snap, ticker)
+                elig_tag = "eligible" if eligible else "NOT eligible"
+                print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}  [{elig_tag}]")
+                if not eligible:
+                    print(f"      ⛔ {inelig_reason}")
                 for chk in report.checks:
                     if chk.severity == "CRITICAL":
                         print(f"      🚨 {chk.message}")
                     elif chk.severity == "WARNING":
                         print(f"      ⚠️  {chk.message}")
+                # Structured explanation with right-aligned labels (replaces the
+                # multi-line \n in report.recommended_action with clean columns).
                 if status in (ThesisStatus.BROKEN, ThesisStatus.DAMAGED):
-                    print(f"      → {report.recommended_action}")
-                # Auto-add broken-thesis tickers to Do-Not-Wheel
-                if status == ThesisStatus.BROKEN:
-                    reason = ("; ".join(c.message for c in report.checks
-                                        if c.severity == "CRITICAL") or "Thesis broken")
-                    dnl.add(ticker, months=6, reason=reason)
-                    print(f"      🔧 Added {ticker} to Do-Not-Wheel list (6 months)")
-                # Auto-remove a listed ticker whose thesis has recovered.
-                elif status in recovery_ok and dnl.is_excluded(ticker):
-                    dnl.remove(ticker)
-                    print(f"      ✅ Removed {ticker} from Do-Not-Wheel — thesis recovered")
+                    _print_thesis_explanation(report, status, ticker)
             except Exception as e:
                 log.warning(f"Thesis validation error for {ticker}: {e}")
                 print(f"  ⚠️  {ticker:<6s} [{source:<7s}] thesis validation error — {e}")
@@ -726,11 +829,13 @@ def _print_thesis(pf, yf_client) -> dict:
 # RECOMMENDATIONS  (derived from live pf state — no hardcoded values)
 # ════════════════════════════════════════════════════════════════
 
-def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage, trading_allowed):
+def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage,
+                           trading_allowed, roll_recs=None):
     print(f"{'='*90}")
     print(f"  📋 RECOMMENDATIONS")
     print(f"{'='*90}")
     recs = []
+    roll_recs = roll_recs or []
 
     cash = pf.funds.liquid
     csp_liab = pf.csp_liability
@@ -753,7 +858,7 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage, t
     damaged = [t for t, r in thesis_results.items() if r.status == ThesisStatus.DAMAGED]
     if damaged:
         recs.append(("HIGH", f"Monitor damaged-thesis positions: {', '.join(damaged)}",
-                     "Weekly review; re-evaluate in 7 days."))
+                     "Daily review covers thesis + guardrails at 09:00 UTC."))
 
     v_pos = pf.stocks.get('V')
     if v_pos:
@@ -766,11 +871,21 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage, t
     if monthly > 10:
         recs.append(("HIGH", "Reduce trading frequency to a systematic Wheel",
                      f"{monthly} filled orders this month — target 8–10/month. "
-                     f"Use weekly reviews only; let positions expire naturally."))
+                     f"Use the daily review at 09:00 UTC; let positions expire naturally."))
+
+    # Roll winners (trend-modulated): bank the accrued profit AND stay in the
+    # thesis instead of flat-closing. Recommend-only for the real portfolio;
+    # net-credit-only + ≤2 rolls per campaign gate the recommendation.
+    if roll_recs:
+        tickers = ', '.join(sorted({t for t, _ in roll_recs}))
+        recs.append(("MEDIUM", f"Roll winners in trend: {tickers}",
+                     "Trend supports more upside — roll for a net credit (down-and-out "
+                     "for CSPs, up-and-out for CCs) to bank profit + keep the position. "
+                     "Net-credit only; max 2 rolls/campaign; skip if no credit roll exists."))
 
     if not trading_allowed:
         recs.append(("LOW", "Current window is monitoring-only",
-                     "Decisions resume at the next weekly thesis review (Mon 9AM)."))
+                     "Daily review runs every day at 09:00 UTC — theses + guardrails."))
 
     if not recs:
         print("  ✅ No actions — portfolio within limits and theses intact.")

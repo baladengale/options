@@ -8,7 +8,7 @@ from moomoo import RET_OK
 from src.data.portfolio_loader import (
     Funds, Portfolio, parse_option_code, is_option_code,
     fetch_funds, fetch_positions, fetch_portfolio, fetch_orders,
-    _buying_power, _finite,
+    _buying_power, _finite, _to_usd, _margin_power, HKD_TO_USD,
 )
 
 
@@ -152,49 +152,92 @@ def test_finite_missing_key_is_zero():
     assert _finite({}.get('power')) == 0.0
 
 
-# ── _buying_power ─────────────────────────────────────────────────
-# The headline fix: prefer moomoo's margin-inclusive `power` over the
-# cash-only `usd_net_cash_power`, which understates BP for stockholding
-# accounts. HKD-currency `power` must be converted to USD.
+# ── _to_usd (currency normalization) ──────────────────────────────
+# Moomoo reports total_assets / total_liabilities / net_assets / power in the
+# account currency (HKD for many accounts). Reading them raw inflates USD
+# figures ~7.8× (the $1.74M "Total Assets" bug).
 
-def test_buying_power_prefers_power_over_cash_power():
-    row = {'power': 120000.0, 'usd_net_cash_power': 48638.89}
-    assert _buying_power(row, 'USD') == 120000.0
-
-
-def test_buying_power_falls_back_to_net_cash_power():
-    # `power` absent/zero → use the legacy cash-only field
-    row = {'power': 0, 'usd_net_cash_power': 48638.89}
-    assert _buying_power(row, 'USD') == pytest.approx(48638.89)
+def test_to_usd_passthrough_for_usd():
+    assert _to_usd(1000.0, 'USD') == 1000.0
 
 
-def test_buying_power_missing_power_falls_back():
-    row = {'usd_net_cash_power': 48638.89}   # no 'power' key at all
-    assert _buying_power(row, 'USD') == pytest.approx(48638.89)
+def test_to_usd_converts_hkd():
+    assert _to_usd(1741205.0, 'HKD') == pytest.approx(1741205.0 / HKD_TO_USD)
 
 
-def test_buying_power_hkd_converts_power_to_usd():
-    # HKD-denominated power is divided by the HKD→USD rate
-    row = {'power': 936000.0, 'usd_net_cash_power': 0}
-    assert _buying_power(row, 'HKD') == pytest.approx(120000.0)  # 936000 / 7.8
+def test_to_usd_none_and_zero():
+    assert _to_usd(0, 'HKD') == 0.0
+    assert _to_usd(None, 'USD') == 0.0
 
 
-def test_buying_power_handles_nan_power():
-    # moomoo can return NaN for power on some accounts → fall back, not crash
-    row = {'power': float('nan'), 'usd_net_cash_power': 48638.89}
-    assert _buying_power(row, 'USD') == pytest.approx(48638.89)
+# ── _buying_power (cash-only, matches moomoo display) ─────────────
+
+def test_buying_power_is_cash_only():
+    """buying_power = usd_net_cash_power (cash-only), NOT the margin `power`.
+    This matches the figure the moomoo app displays as 'Buying Power'."""
+    row = {'power': 611629.0, 'usd_net_cash_power': 21051.0}
+    assert _buying_power(row, 'USD') == 21051.0
 
 
-def test_fetch_funds_uses_power_field():
-    """End-to-end: fetch_funds surfaces `power` as buying_power when present."""
+def test_buying_power_zero_when_no_cash_power():
+    row = {'power': 611629.0}   # no usd_net_cash_power
+    assert _buying_power(row, 'USD') == 0.0
+
+
+def test_buying_power_hkd_converted():
+    row = {'power': 0, 'usd_net_cash_power': 164000.0}
+    assert _buying_power(row, 'HKD') == pytest.approx(164000.0 / HKD_TO_USD)
+
+
+def test_buying_power_handles_nan():
+    row = {'usd_net_cash_power': float('nan')}
+    assert _buying_power(row, 'USD') == 0.0
+
+
+# ── _margin_power (margin-inclusive, separate field) ──────────────
+
+def test_margin_power_reads_power_field():
+    row = {'power': 611629.0, 'usd_net_cash_power': 21051.0}
+    assert _margin_power(row, 'USD') == 611629.0
+
+
+def test_margin_power_zero_when_absent():
+    row = {'usd_net_cash_power': 21051.0}   # no power
+    assert _margin_power(row, 'USD') == 0.0
+
+
+def test_margin_power_hkd_converted():
+    row = {'power': 936000.0}
+    assert _margin_power(row, 'HKD') == pytest.approx(120000.0)  # 936000 / 7.8
+
+
+# ── fetch_funds: end-to-end with corrected semantics ──────────────
+
+def test_fetch_funds_cash_bp_and_margin_power():
+    """buying_power = cash-only; margin_power = margin-inclusive."""
     trd = FakeTrd(funds={
-        'us_cash': 1784.0, 'power': 21051.0, 'usd_net_cash_power': 48638.89,
+        'us_cash': 1784.0, 'power': 611629.0, 'usd_net_cash_power': 21051.0,
         'fund_assets': 19673.0, 'currency': 'USD',
     })
     f = fetch_funds(trd)
-    assert f.buying_power == 21051.0           # power wins over net_cash_power
+    assert f.buying_power == 21051.0          # cash-only (matches moomoo)
+    assert f.margin_power == 611629.0         # margin-inclusive
     assert f.cash == 1784.0
     assert f.fund == 19673.0
+
+
+def test_fetch_funds_normalizes_hkd_total_assets():
+    """HKD total_assets must be converted to USD (the $1.74M bug)."""
+    trd = FakeTrd(funds={
+        'us_cash': 1784.0, 'usd_net_cash_power': 21051.0,
+        'fund_assets': 153455.0, 'currency': 'HKD',          # HKD fund → USD
+        'total_assets': 1741205.0, 'total_liabilities': 0.0, # HKD → USD
+        'net_assets': 0.0,
+    })
+    f = fetch_funds(trd)
+    assert f.total_assets == pytest.approx(1741205.0 / HKD_TO_USD)   # ~$223K, not $1.74M
+    assert f.fund == pytest.approx(153455.0 / HKD_TO_USD)
+    assert f.currency == 'HKD'
 
 
 # ── fetch_positions ───────────────────────────────────────────────

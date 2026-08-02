@@ -48,6 +48,9 @@ from src.filters.contract_filters import passes_all_gates, cc_roc
 from src.data.watchlist import fetch_live_watchlist
 from src.data.portfolio_loader import fetch_live_portfolio
 from src.data.models import TradeCandidate
+from src.analysis.profit_management import (
+    TrendContext, decide_profit_target, trend_context_from_snapshot, ProfitDecision,
+)
 
 # ── Logging ──
 from src.logging_setup import get_logger
@@ -394,14 +397,28 @@ class OIEEngine:
 
                 profit_captured = ((entry - current_bid) / entry * 100) if entry > 0 else 0
                 close_reason = None
+                roll_decision = None  # set when trend-modulated logic wants a roll
 
-                # Profit targets
-                if profit_captured >= 70:
-                    close_reason = 'CLOSE_70PCT'
-                elif profit_captured >= 50:
-                    close_reason = 'CLOSE_50PCT'
+                # Profit targets — trend-modulated (specs/profit-loss-management-spec.md)
+                # CSP in a confirmed uptrend targets 70/85% (stock running away from
+                # strike); CC always 50% but rolls up-and-out to keep shares. With no
+                # trend data, falls back to the flat 50/70% close.
+                strategy = 'CC' if pos_type == 'CALL' else 'CSP'
+                tctx = self._trend_ctx(ticker)
+                pdec = decide_profit_target(
+                    strategy, profit_captured, dte, abs(pos.get('current_delta', 0) or 0),
+                    tctx, capital_scarcity=self._capital_scarcity())
+                if pdec.action == ProfitDecision.ACTION_CLOSE:
+                    close_reason = 'CLOSE_50PCT' if pdec.target_pct <= 50 else 'CLOSE_TREND'
+                elif pdec.action == ProfitDecision.ACTION_ROLL_DOWN_OUT:
+                    roll_decision = 'ROLL_DOWN_OUT'
+                elif pdec.action == ProfitDecision.ACTION_ROLL_UP_OUT:
+                    roll_decision = 'ROLL_UP_OUT'
+                elif pdec.action == ProfitDecision.ACTION_MANAGE_DTE:
+                    close_reason = None  # DTE floor handled by expiry/stop branches below
+                # ACTION_HOLD → no close; let it collect more theta (the new behavior)
                 # Expiry
-                elif dte <= 0:
+                if not close_reason and not roll_decision and dte <= 0:
                     if pos_type == 'CALL':
                         stock_price = stock_prices.get(ticker, 0)
                         if stock_price > strike:
@@ -481,6 +498,24 @@ class OIEEngine:
                         events.append(f'💰 {ticker} {pos_type} ${strike:.0f} {close_reason}: '
                                     f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f}')
                         closed_trades += 1
+
+                # ── Roll winner (trend-modulated): bank profit, redeploy for credit ──
+                # Paper semantics: close the winner now (booking the profit), and let
+                # PHASE 4 screening open a fresh contract on the same ticker/strategy
+                # (net-credit-only + ≤2 rolls gate via the rolling config). This mirrors
+                # how a practitioner rolls — close the tested leg, sell a new one.
+                if roll_decision and not close_reason:
+                    pnl = self.db.close_position(pos_id, current_bid, roll_decision,
+                                                 cash_impact=current_bid * qty * 100)
+                    cash -= current_bid * qty * 100  # pay to close the old leg
+                    cash += entry * qty * 100         # entry credit was booked at open; rebate accounting
+                    direction = 'down-and-out' if roll_decision == 'ROLL_DOWN_OUT' else 'up-and-out'
+                    log.info(f"ROLL {ticker} {pos_type} ${strike:.0f} {roll_decision}: "
+                             f"{profit_captured:.0f}% captured, P&L=${pnl:,.2f}, {direction}")
+                    events.append(f'🔄 {ticker} {pos_type} ${strike:.0f} ROLL ({direction}): '
+                                f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f} — '
+                                f'redeploying for credit in screen phase')
+                    closed_trades += 1
 
             # ── 4. Screen new opportunities ──
             self.db.set_state('cash', str(round(cash, 2)))
@@ -674,6 +709,50 @@ class OIEEngine:
     # ═══════════════════════════════════════════════════════════
     # SCREENING
     # ═══════════════════════════════════════════════════════════
+
+    def _trend_ctx(self, ticker: str) -> TrendContext:
+        """Build a TrendContext for one underlying (best-effort, cached per cycle).
+
+        Reuses the shared _trend_composite so the paper engine's exit decisions
+        see the same 0-100 number the entry screen scored on.
+        """
+        cache = getattr(self, '_trend_cache', None)
+        if cache is None:
+            cache = self._trend_cache = {}
+        if ticker in cache:
+            return cache[ticker]
+        ctx = TrendContext()
+        try:
+            if self.moomoo:
+                snap = self.moomoo.get_stock_snapshot(f'US.{ticker}')
+                if snap and snap.last_price > 0:
+                    history = self.moomoo.get_price_history(f'US.{ticker}', 252)
+                    if history:
+                        from src.data.compute import enrich_stock_snapshot
+                        enrich_stock_snapshot(snap, history)
+                    ctx = trend_context_from_snapshot(snap)
+        except Exception:
+            pass
+        cache[ticker] = ctx
+        return ctx
+
+    def _capital_scarcity(self) -> str:
+        """Coarse capital-scarcity label from paper state (SCARCE/NORMAL/ABUNDANT)."""
+        try:
+            cash = float(self.db.get_state('cash') or 0)
+            positions = self.db.get_active_options()
+            slot_util = len(positions) / max(1, get_config().max_open_positions)
+            # NLV approximation from paper state
+            nlv = cash + sum(float(p.get('entry_premium', 0) or 0) * abs(p.get('qty', 1)) * 100
+                             for p in positions)
+            cash_pct = cash / nlv if nlv > 0 else 0
+            if slot_util < 0.25 and cash_pct >= 0.30:
+                return 'ABUNDANT'
+            if slot_util < 0.50 and cash_pct >= 0.20:
+                return 'NORMAL'
+            return 'SCARCE'
+        except Exception:
+            return 'NORMAL'
 
     def _screen_candidates(self, stock_prices: dict) -> list:
         """Run screener against paper portfolio. Returns ranked TradeCandidate list.

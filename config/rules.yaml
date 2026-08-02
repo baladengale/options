@@ -195,6 +195,35 @@ cc_management:
   roll_dte_threshold: 21
   pause_cc_if_drop_pct: 0.25    # stock > 25% below cost basis
 
+# ── Trend-Modulated Profit Booking (specs/profit-loss-management-spec.md) ──
+# The exit layer is the last place the rich signal stack (trend/sentiment/IV)
+# is applied. CSP trend extension raises the 50% target when the stock is
+# running AWAY from the short put; CC never extends (uptrend runs INTO a short
+# call) but rolls up-and-out to keep shares. Hard gates (21 DTE, capital
+# scarcity, earnings) override every extension.
+profit_take:
+  csp:
+    base_pct: 50                       # Tastytrade base (unconditional)
+    strong_trend_target_pct: 85        # TREND ≥ 70 + sentiment BULLISH/NEUTRAL + IVR ≥ 30
+    trend_target_pct: 70              # TREND ≥ 50 + sentiment BULLISH/NEUTRAL
+    trend_extension_enabled: true     # CSP: trend raises target (stock runs away from strike)
+  cc:
+    base_pct: 50                       # CC never extends a short call in an uptrend
+    trend_extension_enabled: false    # uptrend is the DANGER side for CC
+    roll_up_out_on_trend: true        # close + roll up-and-out for credit when TREND ≥ 50
+  trend_inputs:
+    strong_trend_composite_min: 70
+    trend_composite_min: 50
+    sentiment_direction_allow: [BULLISH, NEUTRAL]
+    iv_rank_min: 30
+  # Final gates (hard — override every extension above)
+  dte_floor: 21                        # ≤ 21 DTE → manage today (gamma floor)
+  capital_scarcity_override: SCARCE   # SCARCE capital → book at base 50%
+  # Loss-side: trend-aware overlay at the 2× premium alert (no threshold changes)
+  loss_alert_trend_overlay:
+    trend_composite_hard_stop_min: 40  # trend < 40 at 2× alert → treat as hard stop
+    max_extra_roll_attempts: 1        # trend ≥ 40 → one roll attempt, then forced decision
+
 # ── Watchlist (default fallback) ──
 watchlist:
   # Moomoo watchlist group to pull live tickers from
@@ -241,6 +270,11 @@ thesis_validation:
   pe_ratio_warning: 50               # DAMAGED if P/E above this
   pe_ratio_critical: 100             # BROKEN if P/E above this
   pe_negative_critical: true         # BROKEN if P/E < 0 (company losing money)
+
+  # Wheel eligibility (daily check) — the watchlist is the master list; this
+  # read-only filter auto-skips clear loss-makers so they never get screened.
+  # Uses moomoo snapshot data only (net_profit + eps_ttm) — no yfinance needed.
+  unprofitable_block: true           # skip when net_profit < 0 AND eps_ttm < 0
 
   # Trusted tickers skip the P/E check entirely (you accept their valuation).
   # Other checks (earnings, SMA, volatility, price perf) still apply.
