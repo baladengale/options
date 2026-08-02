@@ -36,16 +36,16 @@ python3 scripts/oie_engine.py status         # Paper positions + P&L
 Chains **portfolio → market_sentiment → market_data → screener → OIE paper cycle** into a single rich HTML file with a 5–10 bullet Daily Decision Abstract, ready to email.
 
 ```bash
-python3 skills/oie-daily-digest/scripts/daily_digest.py --morning                  # 07:00 pre-market digest
-python3 skills/oie-daily-digest/scripts/daily_digest.py --evening                  # 19:00 post-market digest
-python3 skills/oie-daily-digest/scripts/daily_digest.py --send                     # email (needs config/email.yaml)
-python3 skills/oie-daily-digest/scripts/daily_digest.py --skip-screener --skip-oie # fast mode
+python3 skills/oie/scripts/daily_digest.py --morning                  # 07:00 pre-market digest
+python3 skills/oie/scripts/daily_digest.py --evening                  # 19:00 post-market digest
+python3 skills/oie/scripts/daily_digest.py --send                     # email (needs config/email.yaml)
+python3 skills/oie/scripts/daily_digest.py --skip-screener --skip-oie # fast mode
 ```
 
 - Output: `logs/digest-<timestamp>.html` (rich HTML) + `logs/digest-<timestamp>.json` (facts for the GenAI abstract)
 - The OIE step always runs `--dry-run` — **paper only, never real orders**
 - `--send` delivers the HTML email via SMTP; copy `config/email.yaml.example` → `config/email.yaml` for Gmail setup
-- Cron ideas: `0 7 * * 1-5` / `0 19 * * 1-5` (see `skills/oie-daily-digest/`)
+- Cron ideas: `0 7 * * 1-5` / `0 19 * * 1-5` (see `skills/oie/`)
 
 ---
 
@@ -244,7 +244,7 @@ options/
 │   ├── system/       scheduler — daily review cadence
 │   └── config.py     typed access to rules.yaml
 ├── scripts/          thin wrappers: portfolio, screener, oie_engine, market_data, market_sentiment, decision_review
-├── skills/           oie (interactive) · oie-daily-digest (HTML+email) · moomoo-* · ai-credit-status
+├── skills/           oie (interactive + daily-digest) · moomoo-* · ai-credit-status
 ├── tests/            590+ unit tests + integration / infrastructure / security suites
 ├── deploy/           macOS LaunchAgent + systemd unit + run wrapper
 ├── db/               oie_paper.db (paper trading ONLY)

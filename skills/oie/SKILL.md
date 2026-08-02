@@ -1,23 +1,27 @@
 ---
 name: oie
 description: >-
-  Interactive Options Income Engine — run an ad-hoc portfolio check, screener,
-  single-ticker deep dive, or macro read in this session. Gives specific CC/CSP
-  trade recommendations grounded in actual positions, cash, and config. Use for
-  on-the-spot questions: "what should I trade?", "how does my portfolio look?",
-  "check AAPL", "what's the macro?". For the scheduled morning/evening HTML
-  email digest, use the `oie-daily-digest` skill instead.
+  Options Income Engine — the single OIE skill. Two modes: (1) interactive — run
+  an ad-hoc portfolio check, screener, single-ticker deep dive, or macro read;
+  (2) daily digest — chain the full engine into a rich HTML report and email it.
+  Both give specific CC/CSP trade recommendations grounded in actual positions,
+  cash, and config. Use for "what should I trade?", "how does my portfolio
+  look?", "check AAPL", "what's the macro?", "morning/evening digest".
 ---
 
-Run the OIE engine in this exact order. Never skip steps, never give generic advice, never use stale data.
+The GenAI writes only the narrative digest abstract — it never computes scores, signals, or trade decisions (all deterministic from `config/rules.yaml`). Never give generic advice, never use stale data.
 
-## Step 1 — Load Portfolio State
+## Mode A — Interactive (ad-hoc questions)
+
+Run in this exact order.
+
+### Step 1 — Load Portfolio State
 ```bash
 python3 scripts/portfolio.py --fast
 ```
 If OpenD isn't running on `127.0.0.1:11111` or returns errors → **abort**. Tell the user to start OpenD and retry. Never recommend from memory or yesterday's numbers.
 
-## Step 2 — Run the Relevant Analysis
+### Step 2 — Run the Relevant Analysis
 
 | User asks | Command |
 |-----------|---------|
@@ -26,14 +30,15 @@ If OpenD isn't running on `127.0.0.1:11111` or returns errors → **abort**. Tel
 | "What's my P&L?" / "Show me everything" | `python3 scripts/portfolio.py` |
 | "Just my cash / positions" | `python3 scripts/portfolio.py --fast` |
 | "Check my thesis" | `python3 scripts/portfolio.py --thesis` |
-| "Check AAPL" / "Deep dive NVDA" / "What's V doing?" | `python3 scripts/market_data.py TICKER --options` |
+| "Check AAPL" / "Deep dive NVDA" | `python3 scripts/market_data.py TICKER --options` |
 | "What's the macro?" / "Market outlook?" | `python3 scripts/market_sentiment.py` |
 | "Sentiment on V" / "Analyst ratings MSFT" | `python3 scripts/market_sentiment.py TICKER` |
 | "News on NVDA" | `python3 scripts/market_sentiment.py TICKER --news` |
+| Paper engine status / P&L / history | `python3 scripts/oie_engine.py status\|history` |
 
-Ticker normalization is handled by the scripts (`V` → `US.V`). For a single-ticker screen deep-dive use `scripts/screener.py --validate TICKER`.
+Ticker normalization is handled by the scripts (`V` → `US.V`).
 
-## Step 3 — Apply Rules (from GOAL.md + config/rules.yaml)
+### Step 3 — Apply Rules (from GOAL.md + config/rules.yaml)
 
 Every recommendation must reference the specific rule that allows or blocks it:
 
@@ -45,11 +50,11 @@ Every recommendation must reference the specific rule that allows or blocks it:
 
 If a gate fails, say so explicitly and do not soften the block.
 
-## Step 4 — Supplement with WebSearch (only if needed)
+### Step 4 — Supplement with WebSearch (only if needed)
 
-Use WebSearch *after* the deterministic engine runs — for current news, analyst actions, or sector narrative that adds depth. Never use web search **instead of** the local engine, and never let a web headline override a config gate.
+Use WebSearch *after* the deterministic engine runs — for current news, analyst actions, or sector narrative. Never use it **instead of** the local engine, and never let a web headline override a config gate.
 
-## Step 5 — Format the Answer
+### Step 5 — Format the Answer
 
 1. **Portfolio snapshot** — cash, buying power, net liquidation, CSP liability
 2. **Regime check** — VIX, regime, position size allowed, CSP-pause status
@@ -58,14 +63,30 @@ Use WebSearch *after* the deterministic engine runs — for current news, analys
 
 ---
 
+## Mode B — Daily Digest (scheduled HTML + email)
+
+Chains **portfolio → market_sentiment → market_data → screener → OIE paper cycle** into one rich HTML report with a 5–10 bullet Daily Decision Abstract. The OIE step always runs `--dry-run` — **paper only, never real orders**.
+
+```bash
+python3 skills/oie/scripts/daily_digest.py --morning                  # 07:00 pre-market digest
+python3 skills/oie/scripts/daily_digest.py --evening                  # 19:00 post-market digest
+python3 skills/oie/scripts/daily_digest.py --skip-screener --skip-oie # fast mode
+```
+
+**⚠️ Single-email workflow (no duplicates):**
+1. Run the digest **without** `--send` → writes `logs/digest-<ts>.html` + `.json`. The run never emails.
+2. GenAI reads the facts JSON + section text, then replaces the `<div id="abstract">` bullets in the HTML with a 5–10 bullet Daily Decision Abstract (portfolio status, regime/CSP eligibility, thesis issues, top screens, paper-engine next moves). Deterministic sections stay untouched.
+3. Send the **edited** file exactly once:
+   ```bash
+   python3 skills/oie/scripts/daily_digest.py --send --html logs/digest-<ts>.html
+   ```
+   Needs `config/email.yaml` (copy `config/email.yaml.example`). `--send` without `--html` is rejected — the digest run itself never emails. Cron ideas: `0 7 * * 1-5` / `0 19 * * 1-5`.
+
+---
+
 ## Architecture Note
 
-All business logic lives in `src/` (filters, scoring, data, risk, analysis, guardrails). Scripts in `scripts/` are thin wrappers — they call `src/` modules, never reimplement logic. Every threshold is in `config/rules.yaml`. See `specs/architecture-spec.md` for the full reference and `README.md` for the project map.
-
-## Hand-off
-
-- **Scheduled HTML digest + email** (morning/evening report) → `oie-daily-digest` skill (`skills/oie-daily-digest/scripts/daily_digest.py`).
-- **Paper-trading engine** (`init`, `once`, `run`, `status`, `history`, `sim`) → `scripts/oie_engine.py` directly. The OIE paper cycle always runs `--dry-run` in the digest; for live paper cycles use `oie_engine.py once`.
+All business logic lives in `src/` (filters, scoring, data, risk, analysis, guardrails). Scripts in `scripts/` are thin wrappers — they call `src/` modules, never reimplement logic. Every threshold is in `config/rules.yaml`. See `specs/architecture-spec.md` and `README.md`.
 
 ## Hard Constraints
 
@@ -73,4 +94,4 @@ All business logic lives in `src/` (filters, scoring, data, risk, analysis, guar
 - Cash-Secured Puts only — must hold cash to buy 100 shares at the strike.
 - No margin, no naked options, no spreads.
 - Never sell a CC below cost basis; every trade must pass the collar check.
-- **No script submits real orders** — recommendations only; the user executes manually.
+- **No script submits real orders** — recommendations only; the user executes manually. Paper trading stays in `db/oie_paper.db` only.

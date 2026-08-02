@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """OIE Daily Digest — chain the full engine into a rich HTML report.
-Canonical copy at skills/oie-daily-digest/scripts/daily_digest.py.
-Resolves the repo root dynamically (OIE_REPO env override or walk-up), so paths
-stay flexible and this works both from scripts/ and from skills/oie-daily-digest/scripts/.
+Lives at skills/oie/scripts/daily_digest.py. Resolves the repo root dynamically
+(OIE_REPO env override or walk-up to the folder holding config/rules.yaml), so it
+also runs from scripts/ without changes.
 """
 import argparse
 import html
@@ -222,7 +222,7 @@ def main():
         if not args.html:
             print("ERROR: --send requires --html <path> to the GenAI-edited digest HTML.")
             print("       The digest run does not email; edit the abstract first, then send ONCE:")
-            print("       python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html logs/digest-<ts>.html")
+            print("       python3 skills/oie/scripts/daily_digest.py --send --html logs/digest-<ts>.html")
             sys.exit(1)
         if not os.path.exists(args.html):
             print(f"ERROR: --html file not found: {args.html}")
@@ -260,7 +260,7 @@ def main():
     print(f"\nHTML: {html_path}")
     print(f"Facts: {facts_path}  (feed this to the GenAI abstract step)")
     print("\nNext: let GenAI replace the <div id=\"abstract\"> bullets, then send ONE email:")
-    print(f"  python3 skills/oie-daily-digest/scripts/daily_digest.py --send --html {html_path}")
+    print(f"  python3 skills/oie/scripts/daily_digest.py --send --html {html_path}")
 
 
 if __name__ == '__main__':

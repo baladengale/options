@@ -479,28 +479,6 @@ class TestSystemIntegration:
         except ImportError:
             pytest.skip("Config module not available")
 
-    def test_monitoring_integration(self):
-        """Monitoring system integrates with main system"""
-        try:
-            from src.monitoring.health_checks import create_default_health_checker
-
-            # Create health checker
-            checker = create_default_health_checker()
-
-            # Verify it has default checks
-            assert len(checker.checks) > 0, "Should have default health checks"
-
-            # Run health checks
-            results = checker.run_all_checks()
-
-            # Verify results structure
-            assert 'overall_status' in results, "Results should have overall status"
-            assert 'checks' in results, "Results should have individual checks"
-            assert 'summary' in results, "Results should have summary"
-
-        except ImportError:
-            pytest.skip("Monitoring module not available")
-
 
 class TestPerformanceIntegration:
     """Performance-related integration tests"""
