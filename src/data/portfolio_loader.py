@@ -33,7 +33,35 @@ from moomoo import OpenSecTradeContext, TrdEnv, RET_OK
 _OPTION_RE = re.compile(r'US\.(\w+?)(\d{2})(\d{2})(\d{2})([CP])(\d+)')
 _OPTION_DETECT_RE = re.compile(r'\d{6}[CP]\d+')
 
+# Fallback USD→HKD rate when the live FX quote is unavailable (offline/API
+# failure). The moomoo app converts HKD→USD using the live exchange rate.
 HKD_TO_USD = 7.8
+
+_live_fx_cache: Optional[float] = None
+
+
+def _live_hkd_to_usd() -> Optional[float]:
+    """Best-effort live USD/HKD rate (cached once per process). None on failure."""
+    global _live_fx_cache
+    if _live_fx_cache is not None:
+        return _live_fx_cache
+    try:
+        import yfinance as yf
+        hist = yf.Ticker('HKD=X').history(period='1d', interval='1d')
+        if hist is not None and not hist.empty:
+            rate = float(hist['Close'].iloc[-1])
+            if 7.5 < rate < 8.2:          # sanity band for USD/HKD
+                _live_fx_cache = rate
+                return rate
+    except Exception:
+        pass
+    return None
+
+
+def _hkd_to_usd(raw: float) -> float:
+    """Convert HKD→USD using the live FX rate when available, else 7.8."""
+    rate = _live_hkd_to_usd() or HKD_TO_USD
+    return raw / rate if raw else 0.0
 
 
 @dataclass
@@ -117,7 +145,7 @@ def is_option_code(code: str) -> bool:
 def _normalize_fund(raw: float, currency: str) -> float:
     """fund_assets is reported in HKD for some accounts — convert to USD."""
     if currency == 'HKD' and raw:
-        return raw / HKD_TO_USD
+        return _hkd_to_usd(raw)
     return raw or 0.0
 
 
@@ -139,19 +167,21 @@ def _to_usd(raw: float, currency: str) -> float:
     conversion when the account currency is HKD.
     """
     if currency == 'HKD' and raw:
-        return raw / HKD_TO_USD
+        return _hkd_to_usd(raw)
     return raw or 0.0
 
 
 def _buying_power(f, currency: str) -> float:
     """Cash buying power (USD) — what moomoo displays as 'Buying Power'.
 
-    This is ``usd_net_cash_power`` (cash-only purchasing power, no margin),
-    normalized to USD. It matches the figure the moomoo app shows. The
-    margin-inclusive ``power`` is exposed separately via ``_margin_power`` for
-    accounts that want to see total purchasing power against securities.
+    This is ``usd_net_cash_power`` (cash-only purchasing power, no margin).
+    The ``usd_`` prefix is literal — moomoo reports this field ALREADY in USD
+    regardless of the account's reporting currency (HKD for many accounts), so
+    no HKD→USD conversion is applied. The margin-inclusive ``power`` is exposed
+    separately via ``_margin_power`` for accounts that want to see total
+    purchasing power against securities.
     """
-    return _to_usd(_finite(f.get('usd_net_cash_power')), currency)
+    return _finite(f.get('usd_net_cash_power'))
 
 
 def _margin_power(f, currency: str) -> float:

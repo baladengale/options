@@ -278,8 +278,7 @@ thesis_validation:
 
   # Trusted tickers skip the P/E check entirely (you accept their valuation).
   # Other checks (earnings, SMA, volatility, price perf) still apply.
-  # Example: [AMD, TSLA, PLTR]
-  trusted_tickers: []
+  trusted_tickers: [AMD, TSLA, PLTR]
 
   # Do-Not-Wheel auto-removal: when a re-validated ticker's thesis recovers to
   # this status or better, it is removed from the exclusion list early instead

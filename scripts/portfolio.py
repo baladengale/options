@@ -3,7 +3,7 @@
 the systematic review timeline. Absorbs the former comprehensive_analysis.py.
 
 Bare run is a full sweep: funds → P&L → health+guardrails → timeline →
-do-not-wheel → thesis validation → recommendations.
+thesis validation (with inline do-not-wheel flags) → recommendations.
 
 Usage:
     python3 scripts/portfolio.py             # full sweep (all sections)
@@ -11,7 +11,6 @@ Usage:
     python3 scripts/portfolio.py --health    # decisions + overlap + guardrails only
     python3 scripts/portfolio.py --thesis    # thesis validation on all holdings
     python3 scripts/portfolio.py --schedule  # systematic timeline only
-    python3 scripts/portfolio.py --dnl       # do-not-wheel list only
     python3 scripts/portfolio.py --funds     # account funds only
     python3 scripts/portfolio.py --pnl       # positions + P&L + income
     python3 scripts/portfolio.py --orders    # order history for current positions
@@ -76,10 +75,9 @@ def _resolve_sections(args) -> set:
     if args.orders:   explicit.add('orders')
     if args.thesis:   explicit.add('thesis')
     if args.schedule: explicit.add('timeline')
-    if args.dnl:      explicit.add('dnl')
     if explicit:
         return explicit
-    return {'funds', 'pnl', 'health', 'timeline', 'dnl', 'thesis', 'recommendations'}
+    return {'funds', 'pnl', 'health', 'timeline', 'thesis', 'recommendations'}
 
 
 def main():
@@ -91,7 +89,6 @@ def main():
     parser.add_argument('--orders', nargs='?', const='ALL', help='Order history (optional: filter by ticker)')
     parser.add_argument('--thesis', action='store_true', help='Thesis validation on all holdings')
     parser.add_argument('--schedule', action='store_true', help='Systematic timeline / review schedule')
-    parser.add_argument('--dnl', action='store_true', help='Do-Not-Wheel exclusion list')
     parser.add_argument('--no-external', action='store_true', help='Skip yfinance (offline)')
     args = parser.parse_args()
 
@@ -155,10 +152,6 @@ def main():
     if 'timeline' in sections:
         _print_timeline(pf, nlv)
 
-    # ── DO-NOT-WHEEL ──
-    if 'dnl' in sections:
-        _print_do_not_wheel()
-
     # ── THESIS VALIDATION ──
     thesis_results = {}
     if 'thesis' in sections:
@@ -187,17 +180,14 @@ def _print_funds(pf):
     print(f"  US Cash:            ${f.cash:>14,.2f}")
     print(f"  Fund Assets:        ${f.fund:>14,.2f}")
     print(f"  Liquid (cash+fund): ${f.liquid:>14,.2f}")
-    print(f"  Buying Power:       ${f.buying_power:>14,.2f}  (cash-only — matches moomoo)")
-    if f.margin_power > 0 and f.margin_power != f.buying_power:
-        print(f"  Margin BP:          ${f.margin_power:>14,.2f}  (cash + securities)")
+    print(f"  Buying Power:       ${f.margin_power:>14,.2f}  (margin — matches moomoo app)")
+    print(f"  Cash Buying Power:  ${f.buying_power:>14,.2f}  (cash-only, usd_net_cash_power)")
     print(f"  Total Assets:       ${f.total_assets:>14,.2f}")
-    print(f"  Total Liabilities:  ${f.total_liabilities:>14,.2f}")
-    print(f"  Net Assets:         ${f.net_assets:>14,.2f}")
     print(f"  Margin Used:        {f.margin_used_pct:>13.1f}%")
     print(f"  Net Liquidation:    ${pf.net_liquidation:>14,.2f}")
     print(f"  CSP Liability:      ${pf.csp_liability:>14,.0f}  (cash needed if all puts assign)")
     if f.currency:
-        print(f"  Account Currency:   {f.currency}")
+        print(f"  Account Currency:   USD  (moomoo reports {f.currency}; all figures USD-converted)")
     print()
 
 
@@ -702,32 +692,17 @@ def _print_timeline(pf, nlv):
 
 
 # ════════════════════════════════════════════════════════════════
-# DO-NOT-WHEEL  (persistent exclusion list — file I/O only)
-# ════════════════════════════════════════════════════════════════
-
-def _print_do_not_wheel():
-    dnl = DoNotWheelList()
-    exclusions = dnl.get_all_exclusions()
-    print(f"{'='*90}")
-    print(f"  🚫 DO-NOT-WHEEL LIST ({len(exclusions)} active)")
-    print(f"{'='*90}")
-    if not exclusions:
-        print("  (none)")
-    for e in exclusions:
-        print(f"  ❌ {e.ticker:<6s} until {e.expiration_date} ({e.months} months) — {e.reason}")
-    print()
-
-
-# ════════════════════════════════════════════════════════════════
 # THESIS VALIDATION  (deep checks need yfinance; skipped under --no-external)
 # ════════════════════════════════════════════════════════════════
 
-def _thesis_targets(pf) -> dict:
+def _thesis_targets(pf, moomoo=None) -> dict:
     """Build {ticker: source_label} for thesis validation.
 
-    Unifies stocks + option underlyings + watchlist so every name the engine
-    cares about is thesis-checked (per the TO-DO: watchlist + options + stocks).
-    Each ticker validated once; precedence: stock > option > watchlist.
+    Unifies stocks + option underlyings + the LIVE moomoo watchlist group, so
+    every name the engine cares about is thesis-checked. The watchlist is the
+    master list — not the static config fallback (which can carry stale names
+    like BE/CRM that are no longer watched). Each ticker validated once;
+    precedence: stock > option > watchlist.
     """
     targets: dict[str, str] = {}
     for t in pf.option_tickers:
@@ -735,9 +710,15 @@ def _thesis_targets(pf) -> dict:
     for t in pf.stocks:
         targets[t] = 'stock'        # stock takes precedence over option
     try:
-        for t in get_config().default_watchlist:
+        if moomoo is not None:
+            from src.data.watchlist import fetch_live_watchlist
+            live = fetch_live_watchlist(moomoo.ctx)
+        else:
+            live = get_config().default_watchlist
+        for t in live:
             t = str(t).upper().replace('US.', '')
-            targets.setdefault(t, 'watchlist')
+            if t:
+                targets.setdefault(t, 'watchlist')
     except Exception:
         pass
     return targets
@@ -770,22 +751,23 @@ def _print_thesis(pf, yf_client) -> dict:
     configured recovery status (default INTACT), so the list no longer waits out
     the full 6-month expiry for a stock that has healed.
     """
-    targets = _thesis_targets(pf)
-    print(f"{'='*90}")
-    print(f"  🔍 THESIS VALIDATION ({len(targets)} tickers: "
-          f"{sum(1 for s in targets.values() if s == 'stock')} stock, "
-          f"{sum(1 for s in targets.values() if s == 'option')} option, "
-          f"{sum(1 for s in targets.values() if s == 'watchlist')} watch)")
-    print(f"{'='*90}")
     if yf_client is None:
         print("  ⚠️  Skipped (--no-external): deep thesis checks require yfinance.\n")
         return {}
-    if not targets:
-        print("  (no tickers to validate)\n")
-        return {}
 
     results = {}
+    dnl = DoNotWheelList()
     with MoomooClient() as moomoo:
+        targets = _thesis_targets(pf, moomoo)
+        print(f"{'='*90}")
+        print(f"  🔍 THESIS VALIDATION ({len(targets)} tickers: "
+              f"{sum(1 for s in targets.values() if s == 'stock')} stock, "
+              f"{sum(1 for s in targets.values() if s == 'option')} option, "
+              f"{sum(1 for s in targets.values() if s == 'watchlist')} watch)")
+        print(f"{'='*90}")
+        if not targets:
+            print("  (no tickers to validate)\n")
+            return {}
         for ticker in sorted(targets):
             source = targets[ticker]
             try:
@@ -802,7 +784,20 @@ def _print_thesis(pf, yf_client) -> dict:
                 # engine no longer auto-mutates a blacklist file.
                 eligible, inelig_reason = is_wheel_eligible(snap, ticker)
                 elig_tag = "eligible" if eligible else "NOT eligible"
-                print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}  [{elig_tag}]")
+                # Inline Do-Not-Wheel flag (manual override from do_not_wheel.yaml).
+                # The persistent list is no longer a standalone section — it's
+                # marked here next to the ticker itself with the exclusion reason.
+                dnw_tag = ""
+                dnw_exp = ""
+                if dnl.is_excluded(ticker):
+                    dnw_exp = dnl.get_expiration(ticker) or ""
+                    dnw_reason = dnl.get_reason(ticker) or ""
+                    dnw_tag = f"  🚫 DO-NOT-WHEEL until {dnw_exp}"
+                    print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}  [{elig_tag}]{dnw_tag}")
+                    if dnw_reason:
+                        print(f"      🚫 {dnw_reason}")
+                else:
+                    print(f"  {emoji} {ticker:<6s} [{source:<7s}] {status.value}  [{elig_tag}]")
                 if not eligible:
                     print(f"      ⛔ {inelig_reason}")
                 for chk in report.checks:

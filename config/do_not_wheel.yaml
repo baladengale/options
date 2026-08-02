@@ -1,22 +1,14 @@
-AMD:
-  added_date: '2026-08-02'
-  expiration_date: '2027-02-02'
-  months: 6
-  reason: P/E ratio extremely high (179.7) - speculative valuation
+# Do-Not-Wheel — MANUAL OVERRIDE only.
+#
+# The engine no longer auto-writes to this file. Hand-edit entries here to
+# force-skip a ticker from the wheel (applies in screener + portfolio).
+# Expired entries are ignored automatically.
+#
+# Trusted high-conviction names (AMD, PLTR, TSLA) live in rules.yaml →
+# thesis_validation.trusted_tickers and are NOT listed here.
 BE:
   added_date: '2026-08-02'
   expiration_date: '2027-02-02'
   months: 6
   reason: Negative P/E ratio (-556.2) - company losing money; Stock down 41.4% from
     52-week highs - major decline
-PLTR:
-  added_date: '2026-08-02'
-  expiration_date: '2027-02-02'
-  months: 6
-  reason: P/E ratio extremely high (195.3) - speculative valuation; Stock down 40.7%
-    from 52-week highs - major decline
-TSLA:
-  added_date: '2026-08-02'
-  expiration_date: '2027-02-02'
-  months: 6
-  reason: P/E ratio extremely high (288.2) - speculative valuation

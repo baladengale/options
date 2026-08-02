@@ -115,7 +115,8 @@ def test_fetch_funds_usd():
     assert f.liquid == pytest.approx(49317.0)
 
 
-def test_fetch_funds_hkd_normalizes_to_usd():
+def test_fetch_funds_hkd_normalizes_to_usd(monkeypatch):
+    monkeypatch.setattr('src.data.portfolio_loader._live_fx_cache', 7.8)
     trd = FakeTrd(funds={
         'us_cash': 0, 'usd_net_cash_power': 0,
         'fund_assets': 378300.0, 'currency': 'HKD',
@@ -161,7 +162,10 @@ def test_to_usd_passthrough_for_usd():
     assert _to_usd(1000.0, 'USD') == 1000.0
 
 
-def test_to_usd_converts_hkd():
+def test_to_usd_converts_hkd(monkeypatch):
+    # Fix the live-FX cache to a deterministic value so the test doesn't
+    # depend on yfinance / internet.
+    monkeypatch.setattr('src.data.portfolio_loader._live_fx_cache', 7.8)
     assert _to_usd(1741205.0, 'HKD') == pytest.approx(1741205.0 / HKD_TO_USD)
 
 
@@ -184,9 +188,11 @@ def test_buying_power_zero_when_no_cash_power():
     assert _buying_power(row, 'USD') == 0.0
 
 
-def test_buying_power_hkd_converted():
-    row = {'power': 0, 'usd_net_cash_power': 164000.0}
-    assert _buying_power(row, 'HKD') == pytest.approx(164000.0 / HKD_TO_USD)
+def test_buying_power_usd_prefixed_is_not_converted():
+    """`usd_net_cash_power` is ALREADY USD despite the HKD account currency.
+    The `usd_` prefix is literal — no HKD→USD conversion."""
+    row = {'power': 0, 'usd_net_cash_power': 21155.0}
+    assert _buying_power(row, 'HKD') == pytest.approx(21155.0)
 
 
 def test_buying_power_handles_nan():
@@ -206,7 +212,8 @@ def test_margin_power_zero_when_absent():
     assert _margin_power(row, 'USD') == 0.0
 
 
-def test_margin_power_hkd_converted():
+def test_margin_power_hkd_converted(monkeypatch):
+    monkeypatch.setattr('src.data.portfolio_loader._live_fx_cache', 7.8)
     row = {'power': 936000.0}
     assert _margin_power(row, 'HKD') == pytest.approx(120000.0)  # 936000 / 7.8
 
@@ -226,8 +233,9 @@ def test_fetch_funds_cash_bp_and_margin_power():
     assert f.fund == 19673.0
 
 
-def test_fetch_funds_normalizes_hkd_total_assets():
+def test_fetch_funds_normalizes_hkd_total_assets(monkeypatch):
     """HKD total_assets must be converted to USD (the $1.74M bug)."""
+    monkeypatch.setattr('src.data.portfolio_loader._live_fx_cache', 7.8)
     trd = FakeTrd(funds={
         'us_cash': 1784.0, 'usd_net_cash_power': 21051.0,
         'fund_assets': 153455.0, 'currency': 'HKD',          # HKD fund → USD
