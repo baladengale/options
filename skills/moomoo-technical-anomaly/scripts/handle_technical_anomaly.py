@@ -25,7 +25,12 @@ def bootstrap_repo_path():
 
 def load_futu():
     bootstrap_repo_path()
-    from futu import OpenQuoteContext, RET_OK
+    # moomoo is the rebranded futu SDK (same OpenD gateway, same API surface).
+    # Prefer `futu` if vendored locally, fall back to the installed `moomoo` package.
+    try:
+        from futu import OpenQuoteContext, RET_OK
+    except ImportError:
+        from moomoo import OpenQuoteContext, RET_OK
 
     return OpenQuoteContext, RET_OK
 
