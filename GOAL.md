@@ -7,6 +7,8 @@
 5. Document every position, trade, premium collected along with total profit and loss for tracking
 6. Every decision should be based on actual numbers or sentiments only, do not bypass this
 
+> **Put credit spreads (PS)** are a permitted, defined-risk exception to the pure wheel. They are a suggestion-only income layer (`scripts/screener.py --ps-only`), used when a CSP is paused/capital-tight or when you want the thesis but NOT the shares. Risk is capped at `max_loss = width − net_credit`, which must be 100% cash-backed (no margin — honors rule #4). Net credit ≥ 1/3 of width. See `src/strategies/credit_spread.py`.
+
 ## Actions — CC/CSP Allocation Rules (Always Referenced)
 
 These rules are based on industry research (TastyTrade 200K+ backtested trades, Barchart bull strangle 367 trades, Intrinsic Investor SPY wheel 2018-2025). **Every recommendation must reference these before suggesting any trade.**

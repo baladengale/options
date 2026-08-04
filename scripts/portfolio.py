@@ -840,6 +840,7 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage,
     print(f"{'='*90}")
     recs = []
     roll_recs = roll_recs or []
+    cfg = get_config()
 
     cash = pf.funds.liquid
     csp_liab = pf.csp_liability
@@ -854,6 +855,23 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage,
     if cash_pct < 0.15:
         recs.append(("HIGH", f"Build cash buffer to 15%+ (now {cash_pct:.0%})",
                      "Add via CC income on owned shares; pause new CSPs."))
+
+    # ── Put credit spread pointer (defined-risk income substitute) ──
+    # When CSP is effectively paused (csp deployment over limit OR cash-tight),
+    # a put credit spread gives income at a fraction of the capital (max_loss,
+    # not the full strike) with bounded risk. Suggestion-only — the screener
+    # does the actual scoring. Honors "never prefer margin": max_loss must be
+    # 100% cash-backed (enforced in src/strategies/credit_spread.py).
+    if cfg.credit_spread_enabled:
+        csp_dep = (csp_liab / nlv) if (nlv and nlv > 0 and csp_liab) else 0.0
+        csp_paused_here = csp_dep > cfg.max_csp_deployed_pct or cash_pct < 0.15
+        if csp_paused_here:
+            recs.append(("MEDIUM",
+                         "CSP paused / capital-tight — defined-risk put credit spreads available",
+                         f"CSP deployment {csp_dep:.0%} (limit {cfg.max_csp_deployed_pct:.0%}), "
+                         f"cash {cash_pct:.0%}. Put credit spreads cap downside at max loss "
+                         f"(cash-backed) instead of the full strike. "
+                         f"Run: python3 scripts/screener.py --ps-only"))
 
     broken = [t for t, r in thesis_results.items() if r.status == ThesisStatus.BROKEN]
     if broken:

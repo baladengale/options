@@ -336,6 +336,59 @@ class Config:
         return self._data['cc_management']['pause_cc_if_drop_pct']
 
     # ═══════════════════════════════════════════════════════════
+    # PUT CREDIT SPREAD (defined-risk income supplement)
+    # ═══════════════════════════════════════════════════════════
+
+    def _cs(self, key: str, default=None):
+        """Raw credit_spread config value."""
+        return self._data.get('credit_spread', {}).get(key, default)
+
+    @property
+    def credit_spread_enabled(self) -> bool:
+        return bool(self._cs('enabled', True))
+
+    @property
+    def credit_spread_strategy_code(self) -> str:
+        return str(self._cs('strategy_code', 'PS'))
+
+    @property
+    def credit_spread_widths(self) -> list:
+        """Preferred strike widths to match greedily."""
+        return list(self._cs('width', {}).get('allowed', [2.5, 5.0, 7.5, 10.0]))
+
+    @property
+    def credit_spread_width_min(self) -> float:
+        return float(self._cs('width', {}).get('min', 1.0))
+
+    @property
+    def credit_spread_width_max(self) -> float:
+        return float(self._cs('width', {}).get('max', 10.0))
+
+    @property
+    def credit_spread_credit_ratio_min(self) -> float:
+        return float(self._cs('credit_ratio_min', 0.333))
+
+    @property
+    def credit_spread_roc_min(self) -> float:
+        return float(self._cs('roc_min', 8.0))
+
+    @property
+    def credit_spread_long_leg_oi(self) -> int:
+        return int(self._cs('long_leg', {}).get('open_interest_min', 100))
+
+    @property
+    def credit_spread_long_leg_volume(self) -> int:
+        return int(self._cs('long_leg', {}).get('volume_min', 10))
+
+    @property
+    def credit_spread_max_per_ticker(self) -> int:
+        return int(self._cs('max_per_ticker', 1))
+
+    @property
+    def credit_spread_cash_backed(self) -> bool:
+        return bool(self._cs('cash_backed', True))
+
+    # ═══════════════════════════════════════════════════════════
     # WATCHLIST
     # ═══════════════════════════════════════════════════════════
 

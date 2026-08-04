@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Options trading analysis and execution system with a hard constraint: **only Covered Call and Cash Secured Put strategies are permitted.** No naked options, no spreads, no margin trading.
+Options trading analysis and execution system with a hard constraint: **only Covered Calls, Cash Secured Puts, and (suggestion-only) put credit spreads are permitted.** No naked options, no debit spreads, no iron condors/butterflies, no margin trading.
+
+Put credit spreads are a **defined-risk, cash-backed, suggestion-only** income supplement (UNVALIDATED — paper-trade before live). They cap downside at `max_loss = width − credit` instead of the full strike, and `max_loss` must be 100% cash-backed (honors GOAL.md #4 "never prefer margin"). They are surfaced by `scripts/screener.py --ps-only` and never auto-executed.
 
 The system is a **deterministic data-driven engine** that:
 1. Polls watchlist, portfolio, orders, and funds live from moomoo on every script run
@@ -21,6 +23,7 @@ The codebase follows a strict layered architecture:
 scripts/          ← THIN wrappers: argparse → fetch data → call src/ → display
 src/filters/      ← Shared contract gates: liquidity, delta, IV, VRP, RoC, concentration
 src/scoring/      ← Ticker scoring + contract penalty + holding decisions
+src/strategies/   ← Strategy-specific scoring: put credit spreads (credit_spread.py)
 src/data/         ← Data access: moomoo, yfinance, portfolio, watchlist, guardrails
 src/risk/         ← Risk: overlap detection, exit framework
 src/analysis/     ← Sentiment, macro context, thesis evaluation
@@ -48,7 +51,8 @@ This pulls live positions, orders, and cash from moomoo via `src/data/portfolio_
 
 | User Asks | Run This | Why |
 |-----------|----------|-----|
-| "What should I trade?" / "Any recommendations?" | `python3 scripts/screener.py --top 10` | Scores watchlist → ranked CC/CSP candidates |
+| "What should I trade?" / "Any recommendations?" | `python3 scripts/screener.py --top 10` | Scores watchlist → ranked CC/CSP/PS candidates |
+| "Any put credit spreads?" / "Defined-risk ideas?" | `python3 scripts/screener.py --ps-only` | Put credit spreads only (defined-risk income) |
 | "How are my positions?" / "Portfolio health?" | `python3 scripts/portfolio.py --health` | Scores every holding → decisions + overlap + guardrails |
 | "What's my P&L?" / "Show me everything" | `python3 scripts/portfolio.py` | Full picture: positions, scores, exit decisions, overlap, income, guardrails |
 | "What's V doing?" / "Check AAPL" | `python3 scripts/market_data.py TICKER --options` | Deep dive one ticker |
@@ -83,10 +87,22 @@ Use WebSearch to gather current news, analyst actions, and sector context for th
 
 - **Covered Calls only**: must own 100 shares of the underlying per contract before selling a call.
 - **Cash Secured Puts only**: must hold enough cash to buy 100 shares at the strike price per contract.
-- **No margin, no naked options, no spreads, no iron condors, no butterflies.**
+- **Put credit spreads (PS)** — suggestion-only, defined-risk: `max_loss = width − net_credit` must be 100% cash-backed; net credit ≥ 1/3 of width; width ≤ config cap; short-leg delta in regime range. Not auto-executed. See `src/strategies/credit_spread.py`.
+- **No margin, no naked options, no debit spreads, no iron condors, no butterflies.**
 - Every trade recommendation must include a collar check: verify the position remains covered/cash-secured at all legs.
 - Do NOT suggest trades that violate these constraints, even hypothetically.
 - **Data freshness**: NEVER proceed with analysis on stale data. Sync from moomoo before every run. If sync fails, abort — do not use cached data silently.
+
+### When to use a put credit spread vs a plain CSP
+
+A put credit spread (PCS) is the right substitute for a CSP when you want the same directional/IV thesis but **not** the full-strike capital outlay or the assignment obligation:
+
+| Situation | Use |
+|-----------|-----|
+| CSP is paused (VIX>25 / cash<20% / VOLATILE+ regime / stock >15% off basis) | **PCS** — defined-risk income while the wheel can't run |
+| You want the thesis but NOT the shares (pure premium play) | **PCS** — no assignment beyond the long strike |
+| Strike too large to fully cash-secure with available cash | **PCS** — capital at risk is max_loss, a fraction of the strike |
+| Bullish regime, you WANT the shares at a good basis (wheel entry), CSP allowed | **CSP** — don't spread what you want to be assigned |
 
 ## Portfolio Starting State
 

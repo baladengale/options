@@ -1,8 +1,8 @@
 # Options Wheel Strategy — Deterministic Trading Engine
 
-Covered Call (CC) & Cash-Secured Put (CSP) screening, scoring, and portfolio management with a systematic review cadence.
+Covered Call (CC) & Cash-Secured Put (CSP) screening, scoring, and portfolio management with a systematic review cadence — plus a **put credit spread (PS)** suggestion layer for defined-risk income when the wheel can't run.
 
-**Hard constraints**: no naked options, no margin trading, no spreads. CC needs 100 owned shares per contract; CSP needs full cash coverage. **No script submits orders** — every trade is executed manually. The engine only *recommends*.
+**Hard constraints**: no naked options, no margin trading, no debit spreads. CC needs 100 owned shares per contract; CSP needs full cash coverage. **Put credit spreads** are a suggestion-only, defined-risk exception: `max_loss = width − net_credit` is 100% cash-backed (no margin), net credit ≥ 1/3 of width, surfaced by `scripts/screener.py --ps-only` but **never auto-executed**. **No script submits orders** — every trade is executed manually. The engine only *recommends*.
 
 ---
 

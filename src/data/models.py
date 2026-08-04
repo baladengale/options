@@ -190,7 +190,7 @@ class MarketRegime:
 class TradeCandidate:
     """A screened option trade candidate — shared by screener and OIE engine."""
     ticker: str
-    strategy: str              # CSP or CC
+    strategy: str              # CSP, CC, or PS (put credit spread)
     score: float               # 1-10, lower = better
     strike: float
     expiry: str
@@ -205,3 +205,10 @@ class TradeCandidate:
     open_interest: int = 0
     capital_required: float = 0.0
     reason: str = ''
+    # ── Spread-only fields (None for single-leg CSP/CC) ──
+    # For a put credit spread: strike = short-leg put, long_strike = long (protective)
+    # put. net_credit/max_loss are per-share; capital_required = max_loss × 100.
+    long_strike: Optional[float] = None      # protective leg strike
+    spread_width: Optional[float] = None     # |short strike - long strike|
+    net_credit: Optional[float] = None       # per-share net credit received
+    max_loss: Optional[float] = None         # per-share max loss (width - net_credit)

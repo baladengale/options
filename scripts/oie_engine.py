@@ -573,6 +573,14 @@ class OIEEngine:
                 if executed >= max_new:
                     break
 
+                # Put credit spreads are suggestion-only in this version — the
+                # OIE engine does not (yet) execute or persist them. Explicitly
+                # skip so a stray 'PS' candidate is never silently dropped by
+                # the CC/CSP branches below. See src/strategies/credit_spread.py.
+                if getattr(c, 'strategy', '') == 'PS':
+                    log.debug(f"SKIP_PS {c.ticker} — spreads are suggestion-only")
+                    continue
+
                 # Per-trade guardrail checks (skipped if --ignore-guardrails)
                 if not self.force:
                     new_notional = c.capital_required

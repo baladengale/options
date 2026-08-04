@@ -86,6 +86,27 @@ options:
   earnings:
     blackout_days: 14
 
+# ── Put Credit Spread (PCS) — defined-risk income supplement ──
+# UNVALIDATED — suggestion-only layer, no auto-execution, no DB persistence.
+# Honors GOAL.md #4 ("never prefer margin"): max_loss must be 100% cash-backed.
+# capital_required for a PCS = max_loss × 100 (NOT the full short strike).
+credit_spread:
+  enabled: true
+  strategy_code: 'PS'                 # TradeCandidate.strategy value
+  width:
+    # Preferred strike widths to look for (matched greedily; falls back to any
+    # integer/half strike within [min, max]). All values in strike-$ units.
+    allowed: [2.5, 5.0, 7.5, 10.0]
+    min: 1.0                           # narrower than this = no real protection
+    max: 10.0                          # wider than this = too much capital at risk
+  credit_ratio_min: 0.333              # net_credit / width >= 1/3 (no pennies for dollars)
+  roc_min: 8.0                         # annualized RoC on max_loss (lower bar than CSP)
+  long_leg:
+    open_interest_min: 100             # protective leg must be tradable
+    volume_min: 10
+  max_per_ticker: 1                    # one best spread per ticker in output
+  cash_backed: true                    # max_loss fully covered by cash (GOAL.md #4)
+
 # ── Scoring Weights ──
 scoring:
   weights:
