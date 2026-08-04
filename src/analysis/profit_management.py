@@ -69,6 +69,7 @@ def decide_profit_target(
     delta: float,
     trend_ctx: Optional[TrendContext] = None,
     capital_scarcity: Optional[str] = None,
+    csp_paused: bool = False,
 ) -> ProfitDecision:
     """Decide the profit-side action for one option position.
 
@@ -83,6 +84,12 @@ def decide_profit_target(
         delta: absolute delta of the position (sign-insensitive).
         trend_ctx: the trend/sentiment/IV stack (None → base 50% behavior).
         capital_scarcity: SCARCE / NORMAL / ABUNDANT (None → treated as NORMAL).
+        csp_paused: when True, signals CSP redeployment is currently blocked
+            (deployment % over limit). Combined with the
+            ``bypass_scarce_when_csp_paused`` config flag, this skips GATE 2
+            so trend extension can apply — the capital-velocity argument for
+            booking at 50% collapses when freed capital has no CSP slot to
+            redeploy into. Default False (no bypass).
 
     Returns:
         ProfitDecision naming the target level, action, and reason.
@@ -112,7 +119,14 @@ def decide_profit_target(
                  else cfg.profit_take_cc('base_pct', 50))
 
     # ── GATE 2: capital scarcity (overrides trend extension) ──
-    if scarcity == scarcity_override:
+    # Deployment-aware bypass: when CSP redeployment is blocked (csp_paused=True)
+    # AND the feature flag is enabled, skip this gate. The capital-velocity
+    # argument for forcing 50% assumes the freed capital has somewhere better
+    # to go — when no CSP slot is available, that assumption fails, so trend
+    # extension should apply to qualifying CSPs.
+    bypass_enabled = bool(cfg.profit_take('bypass_scarce_when_csp_paused', False))
+    bypass_active = bypass_enabled and bool(csp_paused)
+    if scarcity == scarcity_override and not bypass_active:
         return _close_at_base(strategy, base, profit_captured, trend_ctx, scarcity,
                               reason=f"Capital {scarcity} — book at base {base:.0f}% "
                                      f"(capital gate beats trend extension).")

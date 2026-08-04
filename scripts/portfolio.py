@@ -519,6 +519,13 @@ def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, por
                     orders=None):
     trend_map = trend_map or {}
     scarcity = _capital_scarcity(portfolio, nlv) if portfolio and nlv else None
+    # CSP redeployment status — feeds the deployment-aware SCARCE bypass in
+    # decide_profit_target. When deployment exceeds the limit, freed capital
+    # has no CSP slot to redeploy into, so forcing 50% booking is suboptimal.
+    # Same csp_liability/nlv ratio computed in _print_guardrails / _compute_staged_guardrails.
+    cfg = get_config()
+    csp_dep = (pf.csp_liability / nlv) if (nlv and nlv > 0 and pf.csp_liability) else 0.0
+    csp_paused = csp_dep > cfg.max_csp_deployed_pct
     roll_recs = []
     print(f"  📊 OPTION DECISIONS:")
     print(f"  {'Code':<26s} {'Qty':>5s} {'DTE':>4s} {'Δ':>7s} {'Bid':>7s} "
@@ -540,7 +547,7 @@ def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, por
         tctx = trend_map.get(pos.get('ticker'))
         score, dec, _pd = _score_option(pos, current, profit_captured, pos.get('pl', 0), today,
                                         yf_client, trend_ctx=tctx, capital_scarcity=scarcity,
-                                        orders=orders)
+                                        orders=orders, csp_paused=csp_paused)
         print(f"  {code:<26s} {pos['qty']:>5,.0f} {dte:>4d} {current.delta:>+6.3f} "
               f"${bid:>6,.2f} {profit_captured:>+6.1f}% {score:>5.1f}  {dec}")
         # Collect roll-winner recommendations (recommend-only; net-credit + ≤2 rolls gate).

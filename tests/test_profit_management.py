@@ -123,6 +123,58 @@ def test_capital_scarce_winner_closes_at_base():
     assert d.action == PD.ACTION_CLOSE and d.target_pct == 50
 
 
+# ── Deployment-aware SCARCE bypass (csp_paused + feature flag) ────
+# When CSP redeployment is blocked (deployment % over limit) AND the feature
+# flag is on, SCARCE is skipped so trend extension applies to qualifying CSPs.
+# Rationale: freed capital has no CSP slot to redeploy into, so the
+# capital-velocity argument for forcing 50% collapses.
+
+def _set_bypass_flag(monkeypatch, value: bool):
+    """Stub the top-level profit_take accessor to control the bypass flag.
+
+    The flag key bypass_scarce_when_csp_paused is read via cfg.profit_take();
+    we delegate all other keys to the real config so the rest of the decision
+    tree (dte_floor, capital_scarcity_override, etc.) stays live.
+    """
+    from src.config import get_config
+    cfg = get_config()
+    real = cfg.profit_take
+    monkeypatch.setattr(
+        cfg, 'profit_take',
+        lambda k, d=None: value if k == 'bypass_scarce_when_csp_paused' else real(k, d),
+    )
+
+
+def test_scarce_bypass_when_csp_paused_and_flag_on(monkeypatch):
+    """SCARCE + strong trend + csp_paused + flag ON → trend extension applies (85%)."""
+    _set_bypass_flag(monkeypatch, True)
+    d = decide_profit_target('CSP', 40, 40, 0.20, STRONG, 'SCARCE', csp_paused=True)
+    assert d.target_pct == 85 and d.extended_by_trend
+    assert d.action == PD.ACTION_HOLD  # 40 < 85
+
+
+def test_scarce_bypass_disabled_when_flag_off(monkeypatch):
+    """SCARCE + strong trend + csp_paused + flag OFF → current behavior (50%).
+
+    Guards against accidentally flipping the default — the bypass only fires
+    when the operator explicitly enables it via rules.yaml.
+    """
+    _set_bypass_flag(monkeypatch, False)
+    d = decide_profit_target('CSP', 40, 40, 0.20, STRONG, 'SCARCE', csp_paused=True)
+    assert d.target_pct == 50 and not d.extended_by_trend
+
+
+def test_scarce_still_applies_when_csp_not_paused(monkeypatch):
+    """SCARCE + strong trend + csp NOT paused + flag ON → still 50% (no bypass).
+
+    The bypass is conditional on redeployment actually being blocked. When CSP
+    slots are available, the SCARCE override fires normally even with the flag on.
+    """
+    _set_bypass_flag(monkeypatch, True)
+    d = decide_profit_target('CSP', 40, 40, 0.20, STRONG, 'SCARCE', csp_paused=False)
+    assert d.target_pct == 50 and not d.extended_by_trend
+
+
 # ── Backward compatibility: trend_ctx=None → flat 50% ─────────────
 
 def test_none_trend_ctx_csp_below_50_holds():

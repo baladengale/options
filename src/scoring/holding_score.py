@@ -150,7 +150,7 @@ def _ticker_frequency_ok(pos: dict, today: date, orders: list) -> tuple[bool, st
 
 def _score_option(pos: dict, current, profit_captured: float, pl: float,
                   today: date, yf_client, trend_ctx=None, capital_scarcity=None,
-                  orders=None) -> tuple[float, str, object]:
+                  orders=None, csp_paused: bool = False) -> tuple[float, str, object]:
     """Score an option position 1-10. Returns (score, decision, profit_decision).
 
     Profit booking is delegated to src.analysis.profit_management.decide_profit_target
@@ -162,6 +162,9 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     position is far OTM (|Δ| < close_if_delta_above) with ample DTE (> close_if_dte_below).
     The third return element is the ProfitDecision from decide_profit_target, threaded
     out so downstream consumers can switch on its ACTION_* constants.
+
+    csp_paused is forwarded to decide_profit_target to enable the deployment-aware
+    SCARCE bypass when CSP redeployment is blocked. Default False (no bypass).
     """
     score = 5.0
     decision = 'HOLD'
@@ -171,7 +174,8 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
 
     # Profit captured — trend-modulated target (spec §4.2)
     from src.analysis.profit_management import decide_profit_target, ProfitDecision
-    pd = decide_profit_target(strategy, profit_captured, dte, delta, trend_ctx, capital_scarcity)
+    pd = decide_profit_target(strategy, profit_captured, dte, delta, trend_ctx,
+                              capital_scarcity, csp_paused=csp_paused)
 
     # ── OTM-only close gate (spec §6) ──
     # Do not auto-close a profitable position when it is far OTM with ample DTE.

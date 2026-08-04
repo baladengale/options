@@ -219,6 +219,12 @@ profit_take:
   # Final gates (hard — override every extension above)
   dte_floor: 21                        # ≤ 21 DTE → manage today (gamma floor)
   capital_scarcity_override: SCARCE   # SCARCE capital → book at base 50%
+  # Deployment-aware SCARCE bypass: when true AND CSP redeployment is blocked
+  # (csp_liability/net_liq > max_csp_deployed_pct), the SCARCE override is
+  # skipped so trend extension can apply. Rationale: if freed capital has no
+  # CSP slot to redeploy into, the capital-velocity argument for booking at
+  # 50% collapses — let winners ride. Default false (PROPOSED — backtest pending).
+  bypass_scarce_when_csp_paused: false
   # Loss-side: trend-aware overlay at the 2× premium alert (no threshold changes)
   loss_alert_trend_overlay:
     trend_composite_hard_stop_min: 40  # trend < 40 at 2× alert → treat as hard stop

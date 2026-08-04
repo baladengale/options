@@ -407,7 +407,8 @@ class OIEEngine:
                 tctx = self._trend_ctx(ticker)
                 pdec = decide_profit_target(
                     strategy, profit_captured, dte, abs(pos.get('current_delta', 0) or 0),
-                    tctx, capital_scarcity=self._capital_scarcity())
+                    tctx, capital_scarcity=self._capital_scarcity(),
+                    csp_paused=self._csp_paused())
                 if pdec.action == ProfitDecision.ACTION_CLOSE:
                     close_reason = 'CLOSE_50PCT' if pdec.target_pct <= 50 else 'CLOSE_TREND'
                 elif pdec.action == ProfitDecision.ACTION_ROLL_DOWN_OUT:
@@ -753,6 +754,32 @@ class OIEEngine:
             return 'SCARCE'
         except Exception:
             return 'NORMAL'
+
+    def _csp_paused(self) -> bool:
+        """Whether CSP redeployment is currently blocked (paper state).
+
+        Mirrors the live portfolio.py check: deployment % over the limit means
+        freed capital has no CSP slot to redeploy into, which enables the
+        deployment-aware SCARCE bypass in decide_profit_target. CSP liability
+        = Σ(strike × |qty| × 100) over active PUT positions; NLV mirrors
+        _capital_scarcity's approximation.
+        """
+        try:
+            positions = self.db.get_active_options()
+            csp_liability = sum(
+                float(p.get('strike', 0) or 0) * abs(p.get('qty', 1)) * 100
+                for p in positions if p.get('pos_type') == 'PUT'
+            )
+            if csp_liability <= 0:
+                return False
+            cash = float(self.db.get_state('cash') or 0)
+            nlv = cash + sum(float(p.get('entry_premium', 0) or 0) * abs(p.get('qty', 1)) * 100
+                             for p in positions)
+            if nlv <= 0:
+                return False
+            return (csp_liability / nlv) > get_config().max_csp_deployed_pct
+        except Exception:
+            return False
 
     def _screen_candidates(self, stock_prices: dict) -> list:
         """Run screener against paper portfolio. Returns ranked TradeCandidate list.
