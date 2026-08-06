@@ -75,7 +75,27 @@ def main():
     candidates: list[TradeCandidate] = []
 
     # ── FETCH PORTFOLIO FIRST (separate connection, close before MoomooClient) ──
-    PORTFOLIO, CASH, BUYING_POWER, FUND, EXISTING_OPTIONS = fetch_live_portfolio()
+    (PORTFOLIO, CASH, CASH_BP, FUND, EXISTING_OPTIONS,
+     OPTIONS_DICT, MARGIN_BP, CSP_LIABILITY) = fetch_live_portfolio()
+    # Use margin-inclusive BP for capital checks (reflects true Reg-T capacity)
+    BUYING_POWER = MARGIN_BP if MARGIN_BP > 0 else CASH_BP
+    # Compute CC shares already committed (existing short calls × 100 per contract)
+    # Each CC contract = -1 qty = 100 shares owed if assigned
+    CC_SHARES_COMMITTED: dict[str, int] = {}
+    for code, opt in OPTIONS_DICT.items():
+        if opt.get('type') == 'CALL':
+            t = opt.get('ticker', '')
+            CC_SHARES_COMMITTED[t] = CC_SHARES_COMMITTED.get(t, 0) + abs(opt.get('qty', 0)) * 100
+    # Use the same worst-case formula as guardrails for CSP cash eligibility:
+    #   available = liquid + (margin-BP × bp_margin_buffer) + (CC notional × cc_assignment_buffer)
+    cc_notional = sum(
+        abs(o['strike']) * abs(o['qty']) * 100
+        for o in OPTIONS_DICT.values()
+        if o.get('type') == 'CALL'
+    )
+    cfg_guard = get_config()
+    LIQUID = CASH + FUND
+    CSP_AVAILABLE = LIQUID + BUYING_POWER * cfg_guard.bp_margin_buffer + cc_notional * cfg_guard.cc_assignment_buffer
 
     with MoomooClient() as moomoo:
         yf_client = YFinanceClient() if not args.no_external else None
@@ -222,12 +242,18 @@ def main():
                 # ── CSP candidates ──
                 if not args.cc_only and not args.ps_only and c.option_type == 'PUT':
                     abs_d = abs(c.delta or 0)
+                    # CSP headroom: how much ADDITIONAL CSP capital fits within the
+                    # worst-case coverage formula. Uses the same formula as guardrails:
+                    #   available = liquid + (margin-BP × buffer) + (CC notional × buffer)
+                    # Headroom = available − existing CSP liability
+                    csp_headroom = max(0.0, CSP_AVAILABLE - CSP_LIABILITY)
                     ok, reason = passes_all_gates(
                         c, 'CSP', regime, snap,
                         skip_concentration=args.force,
                         skip_cash_buffer=args.force,
                         net_liq=total_nlv, cash=CASH + FUND,
-                        buying_power=BUYING_POWER)
+                        buying_power=BUYING_POWER,
+                        csp_headroom=csp_headroom)
                     if not ok:
                         continue
                     # GEX gate (screener-specific)
@@ -256,12 +282,24 @@ def main():
                     ))
 
                 # ── CC candidates ──
-                if not args.csp_only and not args.ps_only and c.option_type == 'CALL' and has_shares:
+                # Gate 1: must hold ≥100 free shares (total − committed CCs)
+                cc_committed = CC_SHARES_COMMITTED.get(short, 0)
+                shares_held = PORTFOLIO.get(short, 0)
+                free_shares = shares_held - cc_committed
+                cc_eligible = has_shares and (free_shares >= 100)
+                if not args.force and not cc_eligible:
+                    if has_shares and free_shares < 100:
+                        log.debug(f"  {short} CC SKIP: {shares_held} shares − {cc_committed} committed = {free_shares} free (< 100)")
+                    continue
+                if not args.csp_only and not args.ps_only and c.option_type == 'CALL' and (has_shares or args.force):
                     ok, reason = passes_all_gates(
                         c, 'CC', regime, snap,
                         skip_concentration=True,
                         skip_cash_buffer=True)
                     if not ok:
+                        continue
+                    # When --force is off, enforce available-shares gate
+                    if not args.force and not cc_eligible:
                         continue
                     roc = cc_roc(c.bid, snap.last_price, c.dte)
                     contract_score = ticker_score + _contract_penalty(c, c.delta, roc)

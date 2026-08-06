@@ -638,8 +638,18 @@ def _print_guardrails(pf, orders, nlv):
                 'ticker': ticker, 'notional': pos.get('mv', 0),
                 'sector': SECTOR_MAP.get(ticker, 'Unknown'), 'csp_liability': csp_liability,
             })
-    gc = GuardrailChecker(net_liq=nlv, cash=pf.funds.liquid, buying_power=pf.funds.buying_power,
-                          open_positions=gc_positions)
+    # Compute CC assignment notional (cash received if all short calls assign)
+    cc_assignment = sum(
+        abs(o['strike']) * abs(o['qty']) * 100
+        for o in pf.options.values()
+        if o.get('type') == 'CALL'
+    )
+    # Use margin-inclusive buying power (pf.funds.margin_power) — this reflects
+    # your true Reg-T borrowing capacity against securities, not just cash-BP.
+    # Falls back to cash buying power if margin_power is unavailable (0 or None).
+    bp = pf.funds.margin_power if pf.funds.margin_power > 0 else pf.funds.buying_power
+    gc = GuardrailChecker(net_liq=nlv, cash=pf.funds.liquid, buying_power=bp,
+                          open_positions=gc_positions, cc_assignment_notional=cc_assignment)
     gr = gc.check()
     # Override position count to use option contracts (not tickers)
     gr.open_positions = len(pf.options)

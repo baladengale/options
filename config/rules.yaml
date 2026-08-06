@@ -148,6 +148,7 @@ position_limits:
   max_margin_pct: 0.30              # 30% margin utilization max
   csp_capital_coverage: 1.0         # must cover 100% of CSP notional with cash+BP
   bp_margin_buffer: 0.50            # 50% of buying power available as margin buffer
+  cc_assignment_buffer: 0.50        # 50% of CC assignment notional counts as available (haircut for OTM risk)
   cash_buffer_warn: 0.25            # cash buffer below this = warning
   cash_buffer_critical: 0.10        # cash buffer below this = block new trades
 

@@ -139,7 +139,9 @@ class OIEEngine:
 
         print("📋 Connecting to REAL account...")
         try:
-            stocks_dict, cash, bp, fund, existing_opts = fetch_live_portfolio()
+            (stocks_dict, cash, cash_bp, fund, existing_opts,
+             _opts_dict, margin_bp, _csp_liab) = fetch_live_portfolio()
+            bp = margin_bp if margin_bp > 0 else cash_bp
         except Exception as e:
             print(f"❌ Failed to fetch REAL portfolio: {e}")
             return False
@@ -324,7 +326,7 @@ class OIEEngine:
 
             # ── 2. Load real portfolio (for CC share check) + MTM options ──
             try:
-                self._real_portfolio, _, _, _, _ = fetch_live_portfolio()
+                self._real_portfolio, _, _, _, _, _, _, _ = fetch_live_portfolio()
             except Exception:
                 self._real_portfolio = {}
             active_options = self.db.get_active_options()

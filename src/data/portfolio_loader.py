@@ -348,13 +348,21 @@ def fetch_portfolio(host: str = '127.0.0.1', port: int = 11111) -> Portfolio:
 
 def fetch_live_portfolio(host: str = '127.0.0.1', port: int = 11111):
     """Convenience: fetch portfolio as tuple for screener/OIE engine compatibility.
-    Returns (holdings_dict, cash, buying_power, fund, option_tickers).
-    Falls back to safe defaults if OpenD is unreachable."""
+    Returns (holdings_dict, cash, cash_bp, fund, option_tickers, options_dict, margin_bp, csp_liability).
+    Falls back to safe defaults if OpenD is unreachable.
+
+    New fields (backward-compatible by position):
+      options_dict: {code: {ticker, type, strike, qty, ...}} — full option positions
+      margin_bp: margin-inclusive buying power ('power' from moomoo)
+      csp_liability: total CSP notional (strike × |qty| × 100)
+    """
     pf = fetch_portfolio(host, port)
     if not pf.stocks and pf.funds.cash == 0 and pf.funds.fund == 0:
-        return {}, 817.0, 48638.89, 48500.0, set()
+        return {}, 817.0, 48638.89, 48500.0, set(), {}, 0.0, 0.0
     holdings = {t: pos['qty'] for t, pos in pf.stocks.items()}
-    return holdings, pf.funds.cash, pf.funds.buying_power, pf.funds.fund, pf.option_tickers
+    margin_bp = pf.funds.margin_power if pf.funds.margin_power > 0 else pf.funds.buying_power
+    return (holdings, pf.funds.cash, pf.funds.buying_power, pf.funds.fund,
+            pf.option_tickers, pf.options, margin_bp, pf.csp_liability)
 
 
 def fetch_portfolio_and_orders(

@@ -1,13 +1,4 @@
-## Framework Adjustments to Make
+## Explore how safely we can relax this guardrails? Will it add more risk? we wanted to make sure framework will let me take more posistion
+  🔴 BLOCK: Cash buffer 8.9% < 10% critical. Keep ≥25% cash. Close positions or add funds.
+  🔴 BLOCK: CSP capital deployed 32.8% > 25% limit. Close or let expire before opening new CSPs.
 
-Based on this evidence, here's what to change in `config/rules.yaml`:
-
-1. __Add an OTM-only close gate for profit-taking closes.__ The framework currently lets you close at 50% profit on ANY position, even those with Δ < 0.30 and > 30 DTE remaining. Add: *"Only auto-close at 50% if |Δ| ≥ 0.30 OR DTE ≤ 21. Otherwise hold and let theta work."* This directly targets the 14 over-management losses.
-
-2. __Raise the delta threshold for defensive closes.__ The current `csp_decision: 0.40` gate triggers too early. The GOOG/MU/MSFT/AVGO/NVDA cases all had Δ < 0.40 when closed. Change `stop_loss.delta.csp_decision` from 0.40 → __0.50__, and `cc_warn` from 0.40 → __0.50__. Only close defensively when assignment risk is REAL.
-
-3. __Let trend-modulated profit targets do their job for CSP winners.__ The current `profit_take_csp` config already has `base_pct: 50` / `trend_target_pct: 70` / `strong_trend_target_pct: 85`. These were coded but the actual trading behavior shows closes happening at 50% regardless of trend. Make the framework __respect the trend extension__ — when the trend composite is ≥ 50 and the stock is running away from your put, don't close at 50%, hold for the 70-85% target instead.
-
-4. __The V churn needs a brake.__ 14 V contracts in 60 days generated only +$4,487 gross (+$258 net) — lots of activity, minimal edge. The framework should flag this as over-management. Consider: *"Max 2 closes per ticker per month"* or *"No re-opening the same strike/expiry within 14 days"*.
-
-5. __Keep the hard-stop saves as-is.__ TSLA and AMD proved the stops work. The `3x far_close`, `2x mid_close`, `1.5x near_close` premium-multiple stops are doing their job. Don't weaken them.

@@ -117,10 +117,19 @@ def passes_concentration(capital: float, net_liq: float,
 
 
 def passes_cash_buffer(capital: float, cash: float, net_liq: float,
-                       buying_power: float, cfg: Optional[Config] = None) -> bool:
-    """Cash buffer check: cash >= 10% of NLV, capital <= 80% of buying power."""
+                       buying_power: float, cfg: Optional[Config] = None,
+                       csp_headroom: float = 0.0) -> bool:
+    """Cash buffer check: cash >= 10% of NLV, capital <= 80% of buying power.
+
+    When csp_headroom > 0 (CSP-available headroom from worst-case formula),
+    the simple cash/% check is replaced by: capital must fit within headroom.
+    Headroom = liquid + (margin-BP × bp_buffer) + (CC notional × cc_buffer) − existing CSP.
+    """
     if cfg is None:
         cfg = get_config()
+    if csp_headroom > 0:
+        # Comprehensive coverage model — new CSP capital fits within available headroom
+        return capital <= csp_headroom
     if net_liq > 0:
         cash_pct = cash / net_liq
         if cash_pct < cfg.cash_buffer_critical:
@@ -139,7 +148,8 @@ def passes_all_gates(contract, strategy: str, regime: str,
                      skip_concentration: bool = False,
                      skip_cash_buffer: bool = False,
                      net_liq: float = 0, cash: float = 0,
-                     buying_power: float = 0) -> Tuple[bool, str]:
+                     buying_power: float = 0,
+                     csp_headroom: float = 0.0) -> Tuple[bool, str]:
     """Run all gates for a contract. Returns (passed, skip_reason).
 
     Args:
@@ -194,7 +204,8 @@ def passes_all_gates(contract, strategy: str, regime: str,
     # 7. Cash buffer (optional)
     if not skip_cash_buffer and cash > 0:
         capital = contract.strike * 100 if strategy.upper() == 'CSP' else snap.last_price * 100
-        if not passes_cash_buffer(capital, cash, net_liq, buying_power, cfg):
+        if not passes_cash_buffer(capital, cash, net_liq, buying_power, cfg,
+                                  csp_headroom=csp_headroom if strategy.upper() == 'CSP' else 0.0):
             return False, 'cash buffer'
 
     return True, ''

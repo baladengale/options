@@ -101,13 +101,15 @@ class GuardrailChecker:
     def __init__(self, net_liq: float, cash: float, buying_power: float,
                  margin_used: float = 0.0,
                  open_positions: Optional[list[dict]] = None,
-                 daily_order_count: int = 0):
+                 daily_order_count: int = 0,
+                 cc_assignment_notional: float = 0.0):
         self._net_liq = net_liq
         self._cash = cash
         self._bp = buying_power
         self._margin = margin_used
         self._positions = open_positions or []
         self._daily_orders = daily_order_count
+        self._cc_notional = cc_assignment_notional
 
     def check(self) -> GuardrailReport:
         """Run all guardrails. Returns report with warnings + blocks."""
@@ -171,15 +173,25 @@ class GuardrailChecker:
                 r.warnings.append(f"{sec} sector at {pct:.1f}% > {self.MAX_SECTOR_PCT()*100:.0f}% limit.")
 
         # ── Worst-case assignment stress test ──
+        # Available resources if ALL CSPs assign simultaneously:
+        #   liquid cash (100%) + margin BP × bp_margin_buffer + CC notional × cc_assignment_buffer
+        # CC proceeds are haircut because the stock may be below all strikes at expiry,
+        # making assignment proceeds zero. The buffer parameter controls how much credit
+        # we give CCs in the worst case (0.50 = 50% assumed assignable).
         csp_total = sum(p.get('csp_liability', 0) for p in self._positions)
         r.worst_case_assignment = csp_total
-        available = self._cash + self._bp * self._cfg().bp_margin_buffer
+        cc_available = self._cc_notional * self._cfg().cc_assignment_buffer
+        available = self._cash + self._bp * self._cfg().bp_margin_buffer + cc_available
         r.worst_case_shortfall = csp_total - available
         if r.worst_case_shortfall > 0:
             r.warnings.append(
                 f"⚠️  Worst-case: all CSPs assigned = ${csp_total:,.0f}. "
-                f"Available: ${available:,.0f}. Shortfall: ${r.worst_case_shortfall:,.0f}. "
+                f"Available: ${available:,.0f} (liquid ${self._cash:,.0f} + BP/{1/self._cfg().bp_margin_buffer:.0f} ${self._bp * self._cfg().bp_margin_buffer:,.0f}"
+                f"{' + CC/' + str(int(1/self._cfg().cc_assignment_buffer)) + ' ' + '${:,.0f}'.format(cc_available) if cc_available > 0 else ''}). "
+                f"Shortfall: ${r.worst_case_shortfall:,.0f}. "
                 f"Reduce CSP count or increase cash buffer.")
+        else:
+            r.all_clear = r.all_clear and len(r.blocks) == 0  # only clear if no blocks either
 
         # ── CSP capital deployed concentration ──
         csp_deployed_pct = (csp_total / self._net_liq) if self._net_liq > 0 else 0

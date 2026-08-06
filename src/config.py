@@ -196,6 +196,17 @@ class Config:
         return self._data['position_limits'].get('bp_margin_buffer', 0.50)
 
     @property
+    def cc_assignment_buffer(self) -> float:
+        """Haircut on CC assignment notional in worst-case coverage (0.0-1.0).
+        
+        CC proceeds are not guaranteed — the stock may be below all strikes at
+        expiry. This parameter controls how much of the CC notional is counted
+        as available funds in the worst-case CSP-assignment stress test.
+        0.50 = count 50% (default conservative), 0.0 = ignore CCs entirely.
+        """
+        return self._data['position_limits'].get('cc_assignment_buffer', 0.50)
+
+    @property
     def cash_buffer_warn(self) -> float:
         return self._data['position_limits'].get('cash_buffer_warn', 0.25)
 
