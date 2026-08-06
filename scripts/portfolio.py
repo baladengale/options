@@ -623,6 +623,7 @@ def _filled_orders_this_month(orders) -> int:
 
 
 def _print_guardrails(pf, orders, nlv):
+    cfg = get_config()
     # Build position list: only stocks with active options for wheel strategy
     tickers_with_options = {o['ticker'] for o in pf.options.values()}
     gc_positions = []
@@ -659,8 +660,8 @@ def _print_guardrails(pf, orders, nlv):
     print(f"{'='*90}")
     print(f"  Net Liq: ${nlv:,.0f} | Liquid: ${pf.funds.liquid:,.0f} ({gr.cash_buffer_pct:.0f}%) | "
           f"Option Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS()})")
-    print(f"  Max single: {gr.max_single_position_pct:.0f}% (limit 15%) | "
-          f"Max sector: {gr.max_sector_pct:.0f}% (limit 25%)")
+    print(f"  Max single: {gr.max_single_position_pct:.0f}% (limit {cfg.max_single_position_pct:.0%}) | "
+          f"Max sector: {gr.max_sector_pct:.0f}% (limit {cfg.max_sector_pct:.0%})")
     if gr.worst_case_shortfall > 0:
         print(f"  ⚠️  CSP liability ${gr.worst_case_assignment:,.0f} — shortfall ${gr.worst_case_shortfall:,.0f}")
     else:

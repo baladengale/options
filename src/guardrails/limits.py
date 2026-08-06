@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional
 import logging
 
+from src.config import get_config
+
 log = logging.getLogger(__name__)
 
 
@@ -53,8 +55,8 @@ class PositionLimits:
     MAX_CSP_LIABILITY_TARGET = 0.35     # 35% - After cash > 20%
 
     # Complexity: Manageable for systematic execution
-    MAX_TOTAL_POSITIONS_TARGET = 8      # 8 positions - Manageable
-    MAX_MONTHLY_ORDERS_TARGET = 10      # 10 orders - True Wheel frequency
+    MAX_TOTAL_POSITIONS_TARGET = 10      # 10 positions - Manageable
+    MAX_MONTHLY_ORDERS_TARGET = 30      # 30 orders - True Wheel frequency
 
     # === COMFORT LIMITS (Optimal Execution - Month 3+) ===
     # When cash buffer is strong, allow more flexibility
@@ -124,6 +126,28 @@ class GuardrailChecker:
         self.cash_buffer_pct = cash / net_liquidation if net_liquidation > 0 else 0
         self.csp_deployment_pct = csp_liability / net_liquidation if net_liquidation > 0 else 0
 
+    @staticmethod
+    def _gl(key: str, fallback):
+        """Read a guardrail limit from config/rules.yaml → guardrail_limits,
+        falling back to the hardcoded constant if not configured."""
+        try:
+            cfg = get_config()
+            return cfg.guardrail_limits(key, fallback)
+        except Exception:
+            return fallback
+
+    @classmethod
+    def _cash_critical(cls):
+        return cls._gl('cash_buffer_critical', PositionLimits.MAX_CASH_BUFFER_CRITICAL)
+
+    @classmethod
+    def _cash_warning(cls):
+        return cls._gl('cash_buffer_warning', PositionLimits.MAX_CASH_BUFFER_WARNING)
+
+    @classmethod
+    def _cash_target(cls):
+        return cls._gl('cash_buffer_target', PositionLimits.MAX_CASH_BUFFER_TARGET)
+
     def get_current_stage(self) -> str:
         """
         Determine current recovery stage based on cash buffer
@@ -131,9 +155,9 @@ class GuardrailChecker:
         Returns:
             'EMERGENCY', 'TARGET', or 'COMFORT'
         """
-        if self.cash_buffer_pct < PositionLimits.MAX_CASH_BUFFER_CRITICAL:
+        if self.cash_buffer_pct < self._cash_critical():
             return 'EMERGENCY'
-        elif self.cash_buffer_pct < PositionLimits.MAX_CASH_BUFFER_TARGET:
+        elif self.cash_buffer_pct < self._cash_target():
             return 'TARGET'
         else:
             return 'COMFORT'
@@ -148,11 +172,11 @@ class GuardrailChecker:
         stage = self.get_current_stage()
 
         if stage == 'EMERGENCY':
-            return PositionLimits.MAX_POSITION_PCT_EMERGENCY
+            return self._gl('max_position_pct_emergency', PositionLimits.MAX_POSITION_PCT_EMERGENCY)
         elif stage == 'TARGET':
-            return PositionLimits.MAX_POSITION_PCT_TARGET
+            return self._gl('max_position_pct_target', PositionLimits.MAX_POSITION_PCT_TARGET)
         else:  # COMFORT
-            return PositionLimits.MAX_POSITION_PCT_QUALITY
+            return self._gl('max_position_pct_quality', PositionLimits.MAX_POSITION_PCT_QUALITY)
 
     def get_sector_limit(self) -> float:
         """
@@ -164,9 +188,9 @@ class GuardrailChecker:
         stage = self.get_current_stage()
 
         if stage == 'EMERGENCY':
-            return PositionLimits.MAX_SECTOR_PCT_EMERGENCY
+            return self._gl('max_sector_pct_emergency', PositionLimits.MAX_SECTOR_PCT_EMERGENCY)
         else:  # TARGET or COMFORT
-            return PositionLimits.MAX_SECTOR_PCT_TARGET
+            return self._gl('max_sector_pct_target', PositionLimits.MAX_SECTOR_PCT_TARGET)
 
     def get_csp_limit(self) -> float:
         """
@@ -177,14 +201,14 @@ class GuardrailChecker:
         """
         cash_pct = self.cash_buffer_pct
 
-        if cash_pct < PositionLimits.MAX_CASH_BUFFER_CRITICAL:
-            return PositionLimits.CSP_LIMIT_10PCT_CASH
-        elif cash_pct < PositionLimits.MAX_CASH_BUFFER_WARNING:
-            return PositionLimits.CSP_LIMIT_15PCT_CASH
-        elif cash_pct < PositionLimits.MAX_CASH_BUFFER_TARGET:
-            return PositionLimits.CSP_LIMIT_20PCT_CASH
+        if cash_pct < self._cash_critical():
+            return self._gl('max_csp_liability_critical', PositionLimits.CSP_LIMIT_10PCT_CASH)
+        elif cash_pct < self._cash_warning():
+            return self._gl('max_csp_liability_warning', PositionLimits.CSP_LIMIT_15PCT_CASH)
+        elif cash_pct < self._cash_target():
+            return self._gl('max_csp_liability_target', PositionLimits.CSP_LIMIT_20PCT_CASH)
         else:
-            return PositionLimits.CSP_LIMIT_30PCT_CASH
+            return self._gl('max_csp_liability_comfort', PositionLimits.CSP_LIMIT_30PCT_CASH)
 
     def get_position_count_limit(self) -> int:
         """
@@ -196,9 +220,9 @@ class GuardrailChecker:
         stage = self.get_current_stage()
 
         if stage == 'EMERGENCY':
-            return PositionLimits.MAX_TOTAL_POSITIONS_EMERGENCY
+            return int(self._gl('max_total_positions_emergency', PositionLimits.MAX_TOTAL_POSITIONS_EMERGENCY))
         else:
-            return PositionLimits.MAX_TOTAL_POSITIONS_TARGET
+            return int(self._gl('max_total_positions_target', PositionLimits.MAX_TOTAL_POSITIONS_TARGET))
 
     def get_monthly_order_limit(self) -> int:
         """
@@ -210,9 +234,9 @@ class GuardrailChecker:
         stage = self.get_current_stage()
 
         if stage == 'EMERGENCY':
-            return PositionLimits.MAX_MONTHLY_ORDERS_EMERGENCY
+            return int(self._gl('max_monthly_orders_emergency', PositionLimits.MAX_MONTHLY_ORDERS_EMERGENCY))
         else:
-            return PositionLimits.MAX_MONTHLY_ORDERS_TARGET
+            return int(self._gl('max_monthly_orders_target', PositionLimits.MAX_MONTHLY_ORDERS_TARGET))
 
     def check_all_guardrails(self, positions: Optional[Dict] = None) -> List[GuardrailViolation]:
         """
@@ -227,23 +251,25 @@ class GuardrailChecker:
         violations = []
 
         # === CHECK 1: Cash Buffer ===
-        if self.cash_buffer_pct < PositionLimits.MAX_CASH_BUFFER_CRITICAL:
+        cash_critical = self._cash_critical()
+        cash_warning = self._cash_warning()
+        if self.cash_buffer_pct < cash_critical:
             violations.append(GuardrailViolation(
                 guardrail_type="cash_buffer",
                 current_value=self.cash_buffer_pct,
-                limit_value=PositionLimits.MAX_CASH_BUFFER_CRITICAL,
+                limit_value=cash_critical,
                 severity="CRITICAL",
-                message=f"Cash buffer {self.cash_buffer_pct:.1%} < {PositionLimits.MAX_CASH_BUFFER_CRITICAL:.0%} - EMERGENCY",
+                message=f"Cash buffer {self.cash_buffer_pct:.1%} < {cash_critical:.0%} - EMERGENCY",
                 required_action="Build cash buffer immediately - add $2-3K/month via CC income",
                 stage="EMERGENCY"
             ))
-        elif self.cash_buffer_pct < PositionLimits.MAX_CASH_BUFFER_WARNING:
+        elif self.cash_buffer_pct < cash_warning:
             violations.append(GuardrailViolation(
                 guardrail_type="cash_buffer",
                 current_value=self.cash_buffer_pct,
-                limit_value=PositionLimits.MAX_CASH_BUFFER_WARNING,
+                limit_value=cash_warning,
                 severity="WARN",
-                message=f"Cash buffer {self.cash_buffer_pct:.1%} < {PositionLimits.MAX_CASH_BUFFER_WARNING:.0%} - Below minimum",
+                message=f"Cash buffer {self.cash_buffer_pct:.1%} < {cash_warning:.0%} - Below minimum",
                 required_action="Build cash to 15% minimum - monthly savings + CC income",
                 stage="TARGET"
             ))

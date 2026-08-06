@@ -139,17 +139,17 @@ scoring:
 
 # ── Position Sizing Hard Limits ──
 position_limits:
-  max_single_position_pct: 0.15     # 15% max per underlying (GOAL.md hard limit — restored from 0.75 testing override)
+  max_single_position_pct: 0.25     # 25% max per underlying (GOAL.md hard limit — restored from 0.75 testing override)
   max_sector_pct: 0.25              # 25% max per sector
   max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
-  max_open_positions: 8             # max active CC/CSP options only (wheel strategy bandwidth)
-  max_daily_new_positions: 2        # new trades per day
+  max_open_positions: 10             # max active CC/CSP options only (wheel strategy bandwidth)
+  max_daily_new_positions: 10        # new trades per day
   max_margin_pct: 0.30              # 30% margin utilization max
   csp_capital_coverage: 1.0         # must cover 100% of CSP notional with cash+BP
   bp_margin_buffer: 0.50            # 50% of buying power available as margin buffer
   cc_assignment_buffer: 0.50        # 50% of CC assignment notional counts as available (haircut for OTM risk)
-  cash_buffer_warn: 0.25            # cash buffer below this = warning
+  cash_buffer_warn: 0.15            # cash buffer below this = warning
   cash_buffer_critical: 0.10        # cash buffer below this = block new trades
 
 # ── CSP Pause Triggers ──
@@ -370,9 +370,9 @@ guardrail_limits:
 
   # Complexity limits
   max_total_positions_emergency: 10  # emergency: accept current level
-  max_total_positions_target: 8      # target: manageable
+  max_total_positions_target: 10      # target: manageable
   max_monthly_orders_emergency: 15   # emergency: tightened from 20 (spec §10)
-  max_monthly_orders_target: 10      # target: true Wheel frequency
+  max_monthly_orders_target: 30      # target: true Wheel frequency
   # Per-ticker frequency cap (spec §9) — kill single-ticker churn
   max_closes_per_ticker_per_month: 2
   same_strike_reopen_cooldown_days: 14

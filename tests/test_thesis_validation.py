@@ -346,8 +346,8 @@ def test_guardrail_violation_creation():
 def test_position_limits_constants():
     assert PositionLimits.MAX_POSITION_PCT_EMERGENCY == 0.15
     assert PositionLimits.MAX_CSP_LIABILITY_CRITICAL == 0.15
-    assert PositionLimits.MAX_TOTAL_POSITIONS_TARGET == 8
-    assert PositionLimits.MAX_MONTHLY_ORDERS_TARGET == 10
+    assert PositionLimits.MAX_TOTAL_POSITIONS_TARGET == 10
+    assert PositionLimits.MAX_MONTHLY_ORDERS_TARGET == 30
 
 
 # ── GuardrailChecker ───────────────────────────────────────────────
