@@ -72,37 +72,42 @@ def is_market_open() -> tuple[bool, str]:
     """
     Check if US stock market is currently open.
     Returns (is_open, reason_string).
-    Uses local system time converted to US Eastern.
+    Converts local system time → UTC → US Eastern (works regardless of local timezone).
     """
-    now = datetime.now()
+    from datetime import timezone, timedelta
 
-    # Weekend check
-    if now.weekday() >= 5:
-        return False, f"Market closed — {now.strftime('%A')}"
+    now_utc = datetime.now(timezone.utc)
+
+    # Weekend check (UTC day matches local day for weekend purposes)
+    if now_utc.weekday() >= 5:
+        return False, f"Market closed — {now_utc.strftime('%A')}"
 
     # Approximate Eastern time: detect EDT vs EST by month
     # EDT (UTC-4): Mar-Nov | EST (UTC-5): Nov-Mar
-    month = now.month
+    month = now_utc.month
     is_dst = 3 < month < 11  # rough EDT estimate
-    utc_offset = 4 if is_dst else 5
-    eastern_hour = (now.hour - utc_offset) % 24
+    eastern_offset = 4 if is_dst else 5
+    eastern_now = now_utc - timedelta(hours=eastern_offset)
+
+    eastern_hour = eastern_now.hour
+    eastern_minute = eastern_now.minute
 
     # Market hours: 9:30 AM - 4:00 PM ET
     market_open_minutes = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN
     market_close_minutes = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MIN
-    current_minutes = eastern_hour * 60 + now.minute
+    current_minutes = eastern_hour * 60 + eastern_minute
 
     if current_minutes < market_open_minutes:
-        return False, f"Market closed — pre-open ({eastern_hour:02d}:{now.minute:02d} ET)"
+        return False, f"Market closed — pre-open ({eastern_hour:02d}:{eastern_minute:02d} ET)"
     if current_minutes >= market_close_minutes:
-        return False, f"Market closed — after hours ({eastern_hour:02d}:{now.minute:02d} ET)"
+        return False, f"Market closed — after hours ({eastern_hour:02d}:{eastern_minute:02d} ET)"
 
-    return True, f"Market open ({eastern_hour:02d}:{now.minute:02d} ET)"
+    return True, f"Market open ({eastern_hour:02d}:{eastern_minute:02d} ET)"
 
 
 def _signal_handler(sig, frame):
     global RUNNING
-    print("\n⏸️  Shutting down after current cycle...")
+    print("\n⏸️  Shutting down after current cycle...", flush=True)
     RUNNING = False
 
 
@@ -1328,7 +1333,10 @@ def main():
                 market_open, reason = is_market_open()
                 if not market_open:
                     print(f"  [{datetime.now().strftime('%H:%M:%S')}] ⏸️  {reason} — waiting...")
-                    time.sleep(60)  # check again in 1 min
+                    for _ in range(60):
+                        if not RUNNING:
+                            break
+                        time.sleep(1)
                     continue
 
             cycle_start = datetime.now()
