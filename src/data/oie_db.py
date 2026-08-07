@@ -258,9 +258,14 @@ class OIEDB:
         if pos['pos_type'] in ('CALL', 'PUT'):
             # Short option: P&L = (entry_premium - exit_price) * qty * 100
             pnl = round((entry - exit_price) * qty * 100, 2)
+            detail = (f'{reason}: {"+" if pnl>=0 else ""}{pnl:,.2f}, '
+                      f'${pos["strike"]:.0f} {pos["pos_type"]} {pos["expiry"]} '
+                      f'(sold @ ${entry:.2f}, closed @ ${exit_price:.2f})')
         else:
             # Stock: P&L = (exit_price - cost_price) * qty
             pnl = round((exit_price - pos['cost_price']) * qty, 2)
+            detail = (f'{reason}: {"+" if pnl>=0 else ""}{pnl:,.2f}, '
+                      f'exit @ ${exit_price:.2f}')
 
         self._conn.execute("""
             UPDATE paper_positions
@@ -270,9 +275,7 @@ class OIEDB:
         """, (exit_price, now, reason, pnl, pos_id))
 
         self._log_trade(now, 'CLOSE', pos['ticker'], pos_id,
-                      f'{reason}: {"+" if pnl>=0 else ""}{pnl:,.2f}, '
-                      f'exit @ ${exit_price:.2f}',
-                      cash_change=cash_impact)
+                      detail, cash_change=cash_impact)
         self._conn.commit()
         return pnl
 

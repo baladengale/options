@@ -707,13 +707,14 @@ class OIEEngine:
             total_value = cash + fund + unrealized  # options-only NLV
 
             if not self.dry_run:
+                option_count = sum(1 for p in active_all if p['pos_type'] in ('CALL', 'PUT'))
                 self.db.save_snapshot(
                     total_value=total_value, cash=cash,
                     stock_value=0, fund_value=fund,
                     option_premium=option_premium,
                     option_liability=option_liability,
                     unrealized_pnl=unrealized, realized_pnl=realized,
-                    open_positions=len(active_all))
+                    open_positions=option_count)
 
                 # ── 8. Log cycle ──
                 self.db.set_state('last_cycle', datetime.now().isoformat())
