@@ -49,8 +49,9 @@ from src.data.watchlist import fetch_live_watchlist
 from src.data.portfolio_loader import fetch_live_portfolio
 from src.data.models import TradeCandidate
 from src.analysis.profit_management import (
-    TrendContext, decide_profit_target, trend_context_from_snapshot, ProfitDecision,
+    TrendContext, trend_context_from_snapshot,
 )
+from src.analysis.exit_management import decide_exit_action
 
 # ── Logging ──
 from src.logging_setup import get_logger
@@ -213,6 +214,64 @@ class OIEEngine:
             print(f"\n   🔒 No option positions in REAL account")
         print(f"\n   📈 Stocks: managed outside this engine (check portfolio_check.py for stock positions)")
         return True
+
+    def reconcile(self):
+        """Non-destructively sync the paper STOCK rows + cash from the REAL
+        account WITHOUT wiping options or history.
+
+        The paper book is the source of truth for CC eligibility (the wheel
+        rotates in paper). After manual real-account trades (buy/sell shares,
+        deposit/withdraw cash), run this to correct drift so the paper book
+        matches reality again. Options and P&L history are preserved.
+
+        Behaviour:
+          - For each ticker present in the REAL account: upsert the paper
+            STOCK qty/cost to match (replace existing ACTIVE STOCK rows).
+          - For tickers in paper but no longer in REAL: leave them (the wheel
+            may have added them via CSP assignment) — surfaced in the report.
+          - Cash + fund are reset to the REAL liquid pool.
+        """
+        if not self.db.is_seeded():
+            print("❌ Not seeded. Run 'init' first.")
+            return False
+
+        print("📋 Connecting to REAL account...")
+        try:
+            (stocks_dict, cash, cash_bp, fund, _existing_opts,
+             _opts_dict, margin_bp, _csp_liab) = fetch_live_portfolio()
+        except Exception as e:
+            print(f"❌ Failed to fetch REAL portfolio: {e}")
+            return False
+
+        net_liquid = cash + fund
+        if net_liquid < 0:
+            net_liquid = fund
+
+        stocks_with_cost = self._fetch_cost_basis(stocks_dict)
+        added, updated, unchanged = self.db.reconcile_stocks(stocks_with_cost)
+
+        # Reset cash/fund to the real liquid pool (options premiums stay in
+        # the running cash balance — only the seed cash is rebaselined).
+        old_cash = float(self.db.get_state('cash', '0'))
+        self.db.set_state('cash', str(round(net_liquid, 2)))
+        self.db.set_state('seeded_cash', str(round(net_liquid, 2)))
+        self.db.set_state('seeded_fund', str(round(0.0, 2)))
+        self.db.set_state('fund', str(round(0.0, 2)))
+
+        print(f"\n✅ Paper book reconciled to REAL account:")
+        print(f"   Stocks:   {added} added, {updated} updated, {unchanged} unchanged")
+        print(f"   Cash:     ${old_cash:,.2f} → ${net_liquid:,.2f}")
+        # Surface paper-only holdings (e.g. shares added by CSP assignment)
+        paper_tickers = {p['ticker'] for p in self.db.get_active_stocks()}
+        real_tickers = set(stocks_with_cost.keys())
+        paper_only = paper_tickers - real_tickers
+        if paper_only:
+            print(f"   ℹ️  {len(paper_only)} ticker(s) in paper only (likely CSP-assigned): "
+                  f"{', '.join(sorted(paper_only))}")
+        print(f"\n   Options and P&L history preserved. Wheel rotation intact.")
+        return True
+
+
 
     def _fetch_cost_basis(self, stocks_dict: dict) -> dict:
         """Fetch actual cost basis + live price for all tickers in ONE connection."""
@@ -398,29 +457,29 @@ class OIEEngine:
                     continue
 
                 profit_captured = ((entry - current_bid) / entry * 100) if entry > 0 else 0
-                close_reason = None
-                roll_decision = None  # set when trend-modulated logic wants a roll
-
-                # Profit targets — trend-modulated (specs/profit-loss-management-spec.md)
-                # CSP in a confirmed uptrend targets 70/85% (stock running away from
-                # strike); CC always 50% but rolls up-and-out to keep shares. With no
-                # trend data, falls back to the flat 50/70% close.
+                delta = abs(pos.get('current_delta', 0) or 0)
                 strategy = 'CC' if pos_type == 'CALL' else 'CSP'
+                pnl_dollars = (entry - current_bid) * qty * 100  # negative = loss
+
+                # ── Single exit decision core (src/analysis/exit_management.py) ──
+                # Composes the trend-modulated profit side (decide_profit_target)
+                # with the loss-side hard stops (delta gates + premium tiers +
+                # absolute catch-all) into one structured decision. All thresholds
+                # come from config/rules.yaml — nothing hardcoded. This replaces
+                # the prior inline block whose CC delta-stop only warned.
                 tctx = self._trend_ctx(ticker)
-                pdec = decide_profit_target(
-                    strategy, profit_captured, dte, abs(pos.get('current_delta', 0) or 0),
+                edec = decide_exit_action(
+                    strategy, profit_captured, dte, delta, pnl_dollars,
                     tctx, capital_scarcity=self._capital_scarcity(),
-                    csp_paused=self._csp_paused())
-                if pdec.action == ProfitDecision.ACTION_CLOSE:
-                    close_reason = 'CLOSE_50PCT' if pdec.target_pct <= 50 else 'CLOSE_TREND'
-                elif pdec.action == ProfitDecision.ACTION_ROLL_DOWN_OUT:
-                    roll_decision = 'ROLL_DOWN_OUT'
-                elif pdec.action == ProfitDecision.ACTION_ROLL_UP_OUT:
-                    roll_decision = 'ROLL_UP_OUT'
-                elif pdec.action == ProfitDecision.ACTION_MANAGE_DTE:
-                    close_reason = None  # DTE floor handled by expiry/stop branches below
-                # ACTION_HOLD → no close; let it collect more theta (the new behavior)
-                # Expiry
+                    csp_paused=self._csp_paused(), cfg=self.cfg)
+                close_reason = edec.close_reason
+                roll_decision = edec.roll_decision
+                if edec.warn:
+                    events.append(f'⚠️  {ticker} {strategy} ${strike:.0f} — {edec.warn}')
+
+                # Expiry — caller resolves ITM/OTM to ASSIGN/EXPIRE (needs stock
+                # price). Only fires when the decision core took no action and
+                # the contract is at/past expiry.
                 if not close_reason and not roll_decision and dte <= 0:
                     if pos_type == 'CALL':
                         stock_price = stock_prices.get(ticker, 0)
@@ -434,35 +493,6 @@ class OIEEngine:
                             close_reason = 'CSP_ASSIGN'
                         else:
                             close_reason = 'EXPIRE'
-
-                # ── Stop-Loss Checks (automated) ──
-                # Only evaluate if no profit/expiry close_reason already set
-                if not close_reason:
-                    delta = abs(pos.get('current_delta', 0) or 0)
-                    strategy = 'CC' if pos_type == 'CALL' else 'CSP'
-                    pnl_dollars = (entry - current_bid) * qty * 100  # negative = loss
-                    loss_multiple = abs(profit_captured) / 100 if profit_captured < 0 else 0
-
-                    # Layer 2: Delta gates (from config/rules.yaml)
-                    if strategy == 'CSP' and delta >= 0.60:
-                        close_reason = 'STOP_DELTA'
-                    elif strategy == 'CC' and delta >= 0.50:
-                        # CC assignment is often desired — warn but don't auto-close
-                        events.append(f'⚠️  {ticker} CC ${strike:.0f} Δ={delta:.2f} — assignment risk,'
-                                    f' prepare shares (not auto-closing)')
-
-                    # Layer 1: Premium multiple stops, DTE-adjusted
-                    if not close_reason and profit_captured < 0:
-                        if dte > 30 and loss_multiple >= 3.0:
-                            close_reason = 'STOP_LOSS'
-                        elif 21 < dte <= 30 and loss_multiple >= 2.0:
-                            close_reason = 'STOP_LOSS'
-                        elif dte <= 21 and loss_multiple >= 1.5:
-                            close_reason = 'STOP_LOSS'
-
-                    # Heavy loss catch-all ($1,000 absolute)
-                    if not close_reason and pnl_dollars < -1000:
-                        close_reason = 'STOP_LOSS'
 
                 if close_reason:
                     if close_reason in ('EXPIRE',):
@@ -802,6 +832,19 @@ class OIEEngine:
         cash = float(self.db.get_state('cash', '0'))
         fund = float(self.db.get_state('fund', '0'))
 
+        # CC share availability — PAPER BOOK IS THE SOURCE OF TRUTH.
+        # free_shares = paper shares held − shares already committed to open CCs.
+        # This makes the wheel rotate in paper: a CSP assignment adds shares
+        # (assign_position('CSP')), a CC assignment removes them. The real
+        # account is only read at seed / reconcile, so the engine is
+        # self-contained and can run the full CC↔CSP cycle on paper.
+        cc_committed: dict[str, float] = {}
+        for o in self.db.get_active_options():
+            if o.get('pos_type') == 'CALL':
+                t = o['ticker']
+                cc_committed[t] = cc_committed.get(t, 0) + abs(o.get('qty', 0)) * 100
+
+
         # Macro
         regime = 'NEUTRAL'
         regime_mult = 1.0
@@ -849,8 +892,9 @@ class OIEEngine:
 
         # ── OPTIMIZATION 3: Single DTE range per ticker ──
         for ticker, short, snap in viable:
-            # CC eligibility: check REAL portfolio shares (stocks not tracked in paper DB)
-            has_shares = short in self._real_portfolio and self._real_portfolio[short] >= 100
+            # CC eligibility: free paper shares (held − committed to open CCs).
+            free_shares = self.db.get_shares(short) - cc_committed.get(short, 0)
+            has_shares = free_shares >= 100
 
             # Fetch history + enrich (cached after first cycle)
             history = self.moomoo.get_price_history(ticker, 252)
@@ -1202,6 +1246,9 @@ def main():
 
     sub.add_parser('status', help='Show paper portfolio status')
     sub.add_parser('history', help='Show P&L history')
+    sub.add_parser('reconcile',
+                   help='Sync paper STOCK rows + cash from REAL account '
+                        '(non-destructive; preserves options & history)')
     reset_p = sub.add_parser('reset', help='Wipe paper portfolio')
     reset_p.add_argument('--force', action='store_true', help='Skip confirmation')
 
@@ -1259,6 +1306,9 @@ def main():
             print("⚠️  Already seeded. Use 'reset --force' then 'init' to re-seed.")
         else:
             engine.init_portfolio()
+
+    elif args.cmd == 'reconcile':
+        engine.reconcile()
 
     elif args.cmd == 'run':
         if not engine.db.is_seeded():

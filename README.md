@@ -101,11 +101,12 @@ Contract gates (liquidity, delta, IV, VRP, RoC minimums) come from `config/rules
 
 ### `oie_engine.py` — Paper Trading Engine
 
-An autonomous paper portfolio that mirrors the strategy with the **same scoring + guardrails** as the real pipeline. **Never touches real money.**
+An autonomous paper portfolio that mirrors the strategy with the **same scoring + guardrails** as the real pipeline. **Never touches real money.** The engine has full control of the paper book: it opens AND manages both CSPs and CCs, and the **paper share count is the source of truth** for CC eligibility — so the wheel rotates end-to-end on paper (CSP-assign → shares → CC → assign → CSP) without depending on the real account after seeding.
 
 | Command | Description |
 |---------|-------------|
-| `init` | Seed paper portfolio from REAL stock holdings + cash (options NOT copied) |
+| `init` | Seed paper portfolio from REAL holdings: stocks + cash + existing options |
+| `reconcile` | Non-destructively sync paper STOCK rows + cash from REAL account (after manual real trades). Preserves options & P&L history. |
 | `once` | Single cycle: mark-to-market → exits → screen → guardrails → paper trades → snapshot |
 | `once --dry-run` | Same but writes NOTHING to DB — preview what WOULD happen |
 | `run [--interval N]` | Continuous loop (default 30 min) with Ctrl+C graceful stop |
@@ -141,7 +142,9 @@ tmux new -s oie
 python3 scripts/oie_engine.py run --interval 60 --skip-closed
 ```
 
-**Cycle phases** (each `once`/`run` iteration): load state → mark-to-market → check exits (trend-modulated profit targets; DTE≤0 → expire/assign; premium-multiple & delta stop-layers) → screen new opportunities → apply guardrails (15% concentration, cash buffer, max 8 positions, 2 trades/day) → execute paper trades → snapshot.
+**Cycle phases** (each `once`/`run` iteration): load state → mark-to-market → **check exits via the single decision core** (`src/analysis/exit_management.py` — composes trend-modulated profit targets with loss-side delta/premium/absolute stops; CSP cuts at |Δ|≥0.60, **CC rolls up-and-out at Δ≥0.60** to keep shares + recapture upside; DTE≤0 → expire/assign) → screen new opportunities → apply guardrails (15% concentration, cash buffer, max 8 positions, 2 trades/day) → execute paper trades → snapshot.
+
+> **CC management** (the autonomy fix): a covered call that goes deep ITM (Δ≥0.60) is now rolled up-and-out for credit — banking the position, keeping the shares, and reopening a higher-strike call to recapture upside. The Δ 0.50–0.60 band stays warn-only (assignment is often a desired wheel outcome). Previously the engine only warned and let ITM calls sit; the 5 V covered calls in the seed book are the regression case (`tests/test_exit_management.py`).
 
 ### `decision_review.py` — Decision Retrospective
 

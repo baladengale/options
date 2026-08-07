@@ -26,7 +26,7 @@ src/scoring/      ← Ticker scoring + contract penalty + holding decisions
 src/strategies/   ← Strategy-specific scoring: put credit spreads (credit_spread.py)
 src/data/         ← Data access: moomoo, yfinance, portfolio, watchlist, guardrails
 src/risk/         ← Risk: overlap detection, exit framework
-src/analysis/     ← Sentiment, macro context, thesis evaluation
+src/analysis/     ← Sentiment, macro context, thesis evaluation, profit & exit management
 config/rules.yaml ← Single source of truth for ALL thresholds, weights, limits
 ```
 
@@ -254,6 +254,8 @@ Key test files and what they validate:
 - `tests/test_screener_scoring.py` — ticker scoring + contract penalty with exact expected values
 - `tests/test_screener_score.py` — scoring engine integration tests
 - `tests/test_holding_score.py` — holding/option scoring with stop-loss decisions
+- `tests/test_profit_management.py` — trend-modulated profit-target decision core
+- `tests/test_exit_management.py` — single exit decision core (profit + loss sides); the 5 V-call CC-autonomy regression fixtures
 - `tests/test_trend.py` — SMA/MACD/RSI/ADX formula correctness + signal generator
 - `tests/test_oie_db.py` — OIE paper DB CRUD operations
 - `tests/test_oie_simulation.py` — OIE simulation + lifecycle tests

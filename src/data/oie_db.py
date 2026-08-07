@@ -163,6 +163,54 @@ class OIEDB:
     def is_seeded(self) -> bool:
         return bool(self.get_state('seeded_at'))
 
+    def reconcile_stocks(self, stocks: dict[str, dict]) -> tuple[int, int, int]:
+        """Non-destructively sync paper STOCK rows to the REAL account.
+
+        For each ticker in ``stocks``:
+          - If paper holds an ACTIVE STOCK row for it → update qty/cost/price.
+          - Else → insert a fresh ACTIVE STOCK row.
+        Tickers in paper but absent from ``stocks`` are left untouched (the
+        wheel may have added them via CSP assignment). Options and history
+        are never touched.
+
+        Returns (added, updated, unchanged) counts.
+        """
+        now = datetime.now().isoformat()
+        today = now[:10]
+        added = updated = unchanged = 0
+        for ticker, info in stocks.items():
+            qty = info.get('qty', 0)
+            cost = info.get('cost', 0)
+            mv = qty * cost if qty and cost else 0
+            row = self._conn.execute(
+                "SELECT id, qty, cost_price FROM paper_positions "
+                "WHERE ticker=? AND status='ACTIVE' AND pos_type='STOCK' "
+                "ORDER BY id LIMIT 1", (ticker,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute("""
+                    INSERT INTO paper_positions
+                    (ticker, pos_type, status, qty, cost_price,
+                     entry_date, entry_premium, current_bid, realized_pnl, created_at)
+                    VALUES (?, 'STOCK', 'ACTIVE', ?, ?, ?, 0, ?, 0, ?)
+                """, (ticker, qty, cost, today, cost, now))
+                self._log_trade(now, 'RECONCILE', ticker, None,
+                              f'Reconcile ADD {qty:.0f} shares @ ${cost:.2f} = ${mv:,.2f}',
+                              cash_change=0)
+                added += 1
+            elif abs((row['qty'] or 0) - qty) > 1e-6 or abs((row['cost_price'] or 0) - cost) > 1e-6:
+                self._conn.execute(
+                    "UPDATE paper_positions SET qty=?, cost_price=?, current_bid=? WHERE id=?",
+                    (qty, cost, cost, row['id']))
+                self._log_trade(now, 'RECONCILE', ticker, row['id'],
+                              f'Reconcile UPDATE → {qty:.0f} shares @ ${cost:.2f} = ${mv:,.2f}',
+                              cash_change=0)
+                updated += 1
+            else:
+                unchanged += 1
+        self._conn.commit()
+        return added, updated, unchanged
+
     # ═══════════════════════════════════════════════════════════
     # POSITIONS — open, close, expire, assign
     # ═══════════════════════════════════════════════════════════
@@ -283,13 +331,17 @@ class OIEDB:
                     exit_reason='CC_ASSIGN', realized_pnl=?
                 WHERE id=?
             """, (now, pnl, pos_id))
-            # Deduct shares from stock position (earliest ID first)
+            # Deduct shares from stock position (earliest ID first). Guard
+            # against over-deduction: only deduct what the paper book actually
+            # holds. If shares are short (drift between paper and real), deduct
+            # what's available and log the shortfall so an operator notices.
             remaining = qty * 100
             stock_rows = self._conn.execute(
                 "SELECT id, qty FROM paper_positions "
                 "WHERE ticker=? AND status='ACTIVE' AND pos_type='STOCK' ORDER BY id",
                 (pos['ticker'],)
             ).fetchall()
+            held = sum(sr['qty'] for sr in stock_rows)
             for sr in stock_rows:
                 if remaining <= 0:
                     break
@@ -303,9 +355,13 @@ class OIEDB:
                     self._conn.execute(
                         "UPDATE paper_positions SET qty=qty-? WHERE id=?",
                         (deduct, sr['id']))
-            self._log_trade(now, 'ASSIGN_CC', pos['ticker'], pos_id,
-                          f'CC assigned: sold {qty*100} shares @ ${strike:.2f}, '
-                          f'+${entry*qty*100:,.2f} premium, P&L ${pnl:,.2f}',
+            short_share = max(0, qty * 100 - held)
+            detail = (f'CC assigned: sold {qty*100} shares @ ${strike:.2f}, '
+                      f'+${entry*qty*100:,.2f} premium, P&L ${pnl:,.2f}')
+            if short_share:
+                detail += (f' ⚠️ {short_share:.0f} shares not held in paper book '
+                           f'(drift from real account) — reconcile to correct.')
+            self._log_trade(now, 'ASSIGN_CC', pos['ticker'], pos_id, detail,
                           cash_change=strike * qty * 100)
             self._conn.commit()
             return 0

@@ -95,3 +95,10 @@ All business logic lives in `src/` (filters, scoring, data, risk, analysis, guar
 - No margin, no naked options, no spreads.
 - Never sell a CC below cost basis; every trade must pass the collar check.
 - **No script submits real orders** — recommendations only; the user executes manually. Paper trading stays in `db/oie_paper.db` only.
+
+## Three-Tool Split
+
+- **`oie` (`scripts/oie_engine.py`)** — the autonomous **paper** engine. Full control of the paper book: opens AND manages both CSPs and CCs. The paper share count is the source of truth for CC eligibility, so the wheel rotates end-to-end on paper. CCs that go deep ITM (Δ≥0.60) are rolled up-and-out for credit; CSPs cut at |Δ|≥0.60. Run `oie reconcile` to re-sync paper STOCK rows + cash to the real account after manual trades (non-destructive; preserves options & history).
+- **`portfolio` (`scripts/portfolio.py`)** — **live** account health: P&L, orders, thesis, funds, guardrails. Read-only.
+- **`screener` (`scripts/screener.py`)** — watchlist **opportunities**: ranked CC/CSP/PS candidates with the same scoring + guardrails as the engine.
+

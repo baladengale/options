@@ -270,6 +270,21 @@ class Config:
     def stop_delta_cc_warn(self) -> float:
         return self._data['stop_loss']['delta'].get('cc_warn', 0.40)
 
+    @property
+    def stop_delta_cc_close(self) -> float:
+        """CC |Δ| at which the engine rolls up-and-out (the autonomy threshold)."""
+        return self._data['stop_loss']['delta'].get('cc_close', 0.60)
+
+    @property
+    def stop_delta_cc_decision(self) -> float:
+        """CC |Δ| at which the engine starts monitoring (warn only, no action)."""
+        return self._data['stop_loss']['delta'].get('cc_decision', 0.50)
+
+    @property
+    def stop_heavy_loss_abs(self) -> float:
+        """Unconditional close at this absolute $ loss (catch-all)."""
+        return self._data['stop_loss']['delta'].get('heavy_loss_abs', 1000)
+
     # ═══════════════════════════════════════════════════════════
     # ROLLING DISCIPLINE
     # ═══════════════════════════════════════════════════════════
