@@ -660,13 +660,22 @@ class OIEEngine:
                         continue
 
                     # Full guardrail for this specific trade
+                    is_cc = c.strategy == 'CC'
                     check = gc.check_new_trade(
-                        c.ticker, 'CC' if c.strategy == 'CC' else 'CSP',
+                        c.ticker, 'CC' if is_cc else 'CSP',
                         c.capital_required,
                         sector=SECTOR_MAP.get(c.ticker, 'Unknown'))
                     if not check.all_clear:
-                        trade_blocks = [b for b in check.blocks
-                                       if c.ticker in b or 'cash' in b.lower()]
+                        # For CCs: skip cash-buffer and CSP-deployment blocks —
+                        # a covered call is share-secured, not cash-secured.
+                        # Only ticker-specific blocks (concentration, sector) apply.
+                        if is_cc:
+                            trade_blocks = [b for b in check.blocks
+                                           if c.ticker in b]
+                        else:
+                            trade_blocks = [b for b in check.blocks
+                                           if c.ticker in b or 'cash' in b.lower()
+                                           or 'CSP' in b]
                         if trade_blocks:
                             events.append(f'🛡️ {c.ticker} {c.strategy} BLOCKED: {"; ".join(trade_blocks[:2])}')
                             continue
