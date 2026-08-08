@@ -19,13 +19,22 @@ Design — the two sides and why they're separate-but-composed:
     a deep-ITM short call could bleed indefinitely. This module makes both
     sides config-driven, symmetric, and unit-testable.
 
-The CC autonomy fix (the reason this module exists):
-  Previously a CC with Δ ≥ 0.50 only emitted a warning. Now a CC at/above
-  ``stop_delta_cc_close`` (0.60) returns ``ROLL_UP_OUT`` — the engine banks
-  the position and Phase-4 screening reopens a higher-strike CC for credit,
-  keeping shares and recapturing upside. The band
-  ``[stop_delta_cc_decision, stop_delta_cc_close)`` (0.50–0.60) stays
-  warn-only. CSP is unchanged: Δ ≥ 0.60 → ``STOP_DELTA`` (cut it).
+CC delta gate — DTE-aware (the wheel-turn fix, 2026-08-08):
+  A deep-ITM covered call near expiry is NOT a risk — it's the wheel doing
+  exactly what it was designed to do. Previously Δ ≥ 0.60 unconditionally
+  returned ROLL_UP_OUT, which churned near-expiry ITM CCs unnecessarily.
+  Now the CC delta gate is DTE-aware:
+    - DTE ≤ ``stop_delta_cc_assign_dte`` (14): HOLD + warn — let the wheel
+      turn. Shares get called at a strike you chose. Assignment is profit.
+    - DTE > 14: ROLL_UP_OUT (net-credit-only) — enough time value remains
+      for a credit roll to make sense.
+  CSP is unchanged: Δ ≥ 0.60 → ``STOP_DELTA`` (cut it — no offsetting asset).
+
+CC premium-multiple exemption:
+  Premium-multiple stop-loss does NOT apply to CCs. The option "loss" on a
+  covered call is offset by share gains — closing the option leg in
+  isolation destroys value. CSP premium stops are unchanged (no offsetting
+  asset). The absolute catch-all (>$1,000 loss) still applies to both.
 
 Authority: config is the single source of truth — no thresholds are hardcoded
 here. Spec §4.2 (decision matrix), §5.1 (loss alerts), §7.2 (gamma-zone).
@@ -143,8 +152,9 @@ def decide_exit_action(
     # A CC in the warn band (0.50–0.60) surfaces an advisory but does not act.
     warn = delta_action.warn
 
-    # 3b. Premium-multiple tiers (DTE-adjusted). Applies to both strategies.
-    premium_action = _premium_tier_stop(profit_captured, dte, cfg)
+    # 3b. Premium-multiple tiers (DTE-adjusted). CSP only — CC is exempt
+    #     (the option "loss" is offset by share gains in a covered position).
+    premium_action = _premium_tier_stop(strategy, profit_captured, dte, cfg)
     if premium_action.acts:
         return premium_action
 
@@ -187,7 +197,8 @@ def _from_profit_decision(pdec: ProfitDecision) -> ExitDecision:
 # ── Loss side: delta gates ─────────────────────────────────────────
 
 def _delta_gate(strategy: str, delta: float, dte: int, cfg) -> ExitDecision:
-    """Layer 2 — delta gates. CSP cuts at critical; CC rolls at close."""
+    """Layer 2 — delta gates. CSP cuts at critical. CC is DTE-aware:
+    near-expiry ITM → HOLD (wheel turn); more DTE → ROLL_UP_OUT."""
     delta = abs(delta)
 
     if strategy == 'CSP':
@@ -200,14 +211,26 @@ def _delta_gate(strategy: str, delta: float, dte: int, cfg) -> ExitDecision:
         # CSP decision band is advisory only (handled by portfolio.py display).
         return ExitDecision()
 
-    # CC: roll at the close threshold; warn in the decision band below it.
+    # CC: DTE-aware delta response.
+    # Near-expiry ITM calls → HOLD for assignment. The wheel strategy
+    # EXPECTS covered calls to go ITM — assignment means selling shares
+    # at a strike you chose, booking profit. Churning near-expiry rolls
+    # just pays commissions to delay the inevitable.
     cc_close = float(cfg.stop_delta_cc_close)
     cc_decision = float(cfg.stop_delta_cc_decision)
+    cc_assign_dte = int(cfg.stop_delta_cc_assign_dte)
+
     if delta >= cc_close:
+        if dte <= cc_assign_dte:
+            return ExitDecision(
+                warn=f"CC Δ={delta:.2f} ≥ {cc_close:.2f} with {dte} DTE ≤ "
+                     f"{cc_assign_dte} — assignment imminent; letting the wheel "
+                     f"turn (shares called at strike = profit booked).")
         return ExitDecision(
             roll_decision=ROLL_UP_OUT,
-            reason=f"CC Δ={delta:.2f} ≥ {cc_close:.2f} — roll up-and-out for "
-                   f"credit (bank position, keep shares, recapture upside); "
+            reason=f"CC Δ={delta:.2f} ≥ {cc_close:.2f} with {dte} DTE > "
+                   f"{cc_assign_dte} — roll up-and-out for credit "
+                   f"(net-credit-only per rolling discipline); "
                    f"if no credit roll, accept assignment.")
     if delta >= cc_decision:
         return ExitDecision(
@@ -218,12 +241,20 @@ def _delta_gate(strategy: str, delta: float, dte: int, cfg) -> ExitDecision:
 
 # ── Loss side: premium-multiple tiers (DTE-adjusted) ───────────────
 
-def _premium_tier_stop(profit_captured: float, dte: int, cfg) -> ExitDecision:
+def _premium_tier_stop(strategy: str, profit_captured: float, dte: int,
+                       cfg) -> ExitDecision:
     """Layer 1 — premium-multiple stops. close_multiple depends on DTE band.
 
     profit_captured < 0 here (a loss). loss_multiple = |captured| / 100,
     i.e. how many × the original premium has been lost.
+
+    CC is EXEMPT: the option "loss" on a covered call is offset by share
+    gains — closing the option leg in isolation destroys value. The
+    absolute catch-all (heavy_loss_abs) still applies to both strategies.
     """
+    if strategy == 'CC':
+        return ExitDecision()
+
     if profit_captured >= 0:
         return ExitDecision()
 

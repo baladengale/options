@@ -181,8 +181,9 @@ stop_loss:
     csp_decision: 0.50   # CSP |Δ| ≥ 0.50 → "decision time": plan roll / take assignment / exit (was 0.40, §7.2)
     cc_critical: 0.50    # CC Δ > 0.50 → prepare for assignment (display/portfolio.py)
     cc_warn: 0.50        # CC Δ > 0.50 → monitor closely (display/portfolio.py; was 0.40, §7.2)
-    cc_close: 0.60       # CC Δ ≥ 0.60 → roll up-and-out for credit (was warn-only; the CC autonomy fix)
+    cc_close: 0.60       # CC Δ ≥ 0.60 AND DTE > cc_assign_dte → roll up-and-out for credit
     cc_decision: 0.50    # CC Δ in [cc_decision, cc_close) → warn only, no auto-action
+    cc_assign_dte: 14    # CC Δ ≥ cc_close AND DTE ≤ this → HOLD for assignment (wheel turn)
     heavy_loss_abs: 1000 # unconditional close at this absolute $ loss (catch-all)
 
 # ── Rolling Discipline (UNVALIDATED — backtest pending, playbook §3) ──

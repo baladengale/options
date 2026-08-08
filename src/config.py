@@ -281,6 +281,13 @@ class Config:
         return self._data['stop_loss']['delta'].get('cc_decision', 0.50)
 
     @property
+    def stop_delta_cc_assign_dte(self) -> int:
+        """CC Δ ≥ cc_close AND DTE ≤ this → HOLD for assignment (let the wheel turn).
+        Near-expiry ITM calls have negligible time value — rolling just churns
+        commissions. Assignment is the expected wheel outcome."""
+        return int(self._data['stop_loss']['delta'].get('cc_assign_dte', 14))
+
+    @property
     def stop_heavy_loss_abs(self) -> float:
         """Unconditional close at this absolute $ loss (catch-all)."""
         return self._data['stop_loss']['delta'].get('heavy_loss_abs', 1000)

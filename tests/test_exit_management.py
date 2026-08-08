@@ -163,6 +163,91 @@ def test_cc_winner_at_base_closes():
 
 
 # ════════════════════════════════════════════════════════════════════
+# CC DTE-aware delta gate — the wheel-turn fix (2026-08-08)
+# ════════════════════════════════════════════════════════════════════
+
+def test_cc_deep_itm_near_expiry_holds_for_assignment():
+    """CC Δ≥0.60 with DTE≤14 → HOLD (warn), NOT roll. Let the wheel turn.
+    Near-expiry ITM calls have negligible time value — rolling just churns
+    commissions. Assignment means selling shares at a strike you chose."""
+    d = decide_exit_action('CC', profit_captured=-22, dte=13, delta=0.65,
+                           pnl_dollars=-190, trend_ctx=UPTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert not d.acts, "CC near expiry should HOLD, not roll"
+    assert d.roll_decision is None
+    assert d.close_reason is None
+    assert d.warn is not None
+    assert 'assignment imminent' in d.warn.lower()
+    assert 'wheel' in d.warn.lower()
+
+
+def test_cc_deep_itm_near_expiry_boundary_dte_14_holds():
+    """CC Δ≥0.60 at exactly DTE 14 (the boundary) → HOLD for assignment."""
+    d = decide_exit_action('CC', profit_captured=-30, dte=14, delta=0.62,
+                           pnl_dollars=-300, trend_ctx=UPTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert not d.acts, "DTE 14 ≤ cc_assign_dte(14) → should HOLD"
+
+
+def test_cc_deep_itm_far_expiry_still_rolls():
+    """CC Δ≥0.60 with DTE>14 → ROLL_UP_OUT (unchanged for longer DTE).
+    More time value remains — a credit roll can meaningfully improve the strike."""
+    d = decide_exit_action('CC', profit_captured=-43, dte=19, delta=0.81,
+                           pnl_dollars=-355, trend_ctx=UPTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert d.roll_decision == ROLL_UP_OUT
+    assert 'DTE >' in d.reason
+
+
+def test_cc_deep_itm_41_dte_still_rolls():
+    """CC Δ≥0.60 with DTE 41 (well above threshold) → ROLL_UP_OUT."""
+    d = decide_exit_action('CC', profit_captured=-92, dte=41, delta=0.70,
+                           pnl_dollars=-785, trend_ctx=UPTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert d.roll_decision == ROLL_UP_OUT
+
+
+def test_csp_heavy_loss_still_fires_premium_stop():
+    """CSP premium-multiple stop is UNCHANGED — no offsetting asset for CSP.
+    CSP at 3.1× far-DTE → STOP_LOSS still fires."""
+    d = decide_exit_action('CSP', profit_captured=-310, dte=40, delta=0.30,
+                           pnl_dollars=-310, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert d.close_reason == STOP_LOSS
+
+
+def test_cc_heavy_loss_not_stopped_by_premium_tier():
+    """CC at 5× premium lost (far DTE) — still HOLD because premium-multiple
+    stop does NOT apply to CCs. The covered position is still net profitable."""
+    d = decide_exit_action('CC', profit_captured=-500, dte=40, delta=0.25,
+                           pnl_dollars=-500, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert not d.acts, "CC exempt from premium-multiple stop — offsetting shares"
+
+
+def test_cc_heavy_loss_still_caught_by_absolute_catchall():
+    """CC at -$1,200 pnl_dollars → STOP_LOSS from absolute catch-all.
+    The absolute catch-all (>$1,000 loss) still applies to both strategies."""
+    d = decide_exit_action('CC', profit_captured=-50, dte=40, delta=0.30,
+                           pnl_dollars=-1200, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False)
+    assert d.close_reason == STOP_LOSS
+    assert 'catch-all' in d.reason.lower()
+
+
+def test_cc_deep_itm_near_expiry_config_driven(monkeypatch):
+    """Raising cc_assign_dte to 21 means DTE 19 is now in the HOLD zone."""
+    cfg = _cfg()
+    monkeypatch.setattr(type(cfg), 'stop_delta_cc_assign_dte',
+                        property(lambda self: 21))
+    d = decide_exit_action('CC', profit_captured=-43, dte=19, delta=0.81,
+                           pnl_dollars=-355, trend_ctx=UPTREND,
+                           capital_scarcity='NORMAL', csp_paused=False, cfg=cfg)
+    assert not d.acts, "DTE 19 ≤ cc_assign_dte(21) → should HOLD"
+    assert d.warn is not None
+
+
+# ════════════════════════════════════════════════════════════════════
 # Premium-multiple tiers (loss side) — DTE-adjusted, both strategies
 # ════════════════════════════════════════════════════════════════════
 
@@ -184,8 +269,8 @@ def test_premium_stop_far_dte_below_3x_holds():
 
 
 def test_premium_stop_mid_dte_2x():
-    """21 < DTE ≤ 30: close at 2× premium lost."""
-    d = decide_exit_action('CC', profit_captured=-210, dte=25, delta=0.20,
+    """21 < DTE ≤ 30: CSP closes at 2× premium lost. (CC is exempt — see below.)"""
+    d = decide_exit_action('CSP', profit_captured=-210, dte=25, delta=0.20,
                            pnl_dollars=-210, trend_ctx=NOTREND,
                            capital_scarcity='NORMAL', csp_paused=False)
     assert d.close_reason == STOP_LOSS
@@ -201,12 +286,15 @@ def test_premium_stop_near_dte_1_5x():
     assert '1.5×' in d.reason
 
 
-def test_premium_stop_applies_to_cc_too():
-    """Loss-side premium tiers are strategy-agnostic. CC at 3× far-DTE → STOP_LOSS."""
+def test_cc_exempt_from_premium_stop():
+    """CC does NOT fire premium-multiple stop-loss — the option "loss" is
+    offset by share gains in a covered position. Closing the option leg in
+    isolation destroys value. HOLD instead (absolute catch-all still applies)."""
     d = decide_exit_action('CC', profit_captured=-305, dte=40, delta=0.20,
                            pnl_dollars=-305, trend_ctx=NOTREND,
                            capital_scarcity='NORMAL', csp_paused=False)
-    assert d.close_reason == STOP_LOSS
+    assert not d.acts, "CC should be exempt from premium-multiple stop-loss"
+    assert 'hold' in d.reason.lower()
 
 
 # ════════════════════════════════════════════════════════════════════

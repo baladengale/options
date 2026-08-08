@@ -439,6 +439,18 @@ class OIEEngine:
             active_options = self.db.get_active_options()  # refresh after MTM
             today = date.today()
 
+            # ── Seed grace period: skip exit decisions for just-seeded positions.
+            # Positions seeded from the real portfolio reflect real-world entry
+            # prices/deltas — they should NOT be immediately rolled/closed on the
+            # first cycle. A 300s window after seeded_at covers the first cycle.
+            seeded_at_str = self.db.get_state('seeded_at', '')
+            seeded_at = None
+            if seeded_at_str:
+                try:
+                    seeded_at = datetime.fromisoformat(seeded_at_str)
+                except (ValueError, TypeError):
+                    pass
+
             for pos in active_options:
                 entry = pos['entry_premium'] or 0
                 current_bid = pos['current_bid'] or 0
@@ -460,6 +472,17 @@ class OIEEngine:
                 # Skip if no pricing data
                 if current_bid <= 0 and dte > 0:
                     continue
+
+                # Skip exit decisions for positions created during the seed —
+                # they haven't had a full cycle yet. (Grace window: ±5 min of
+                # seeded_at, covering the seed + first cycle window.)
+                if seeded_at and pos.get('created_at'):
+                    try:
+                        pos_created = datetime.fromisoformat(pos['created_at'])
+                        if abs((pos_created - seeded_at).total_seconds()) < 300:
+                            continue  # grace period — skip exit decisions
+                    except (ValueError, TypeError):
+                        pass
 
                 profit_captured = ((entry - current_bid) / entry * 100) if entry > 0 else 0
                 delta = abs(pos.get('current_delta', 0) or 0)
