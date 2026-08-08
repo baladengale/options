@@ -192,6 +192,7 @@ class OIEEngine:
                         expiry=opt['expiry'], dte=opt['dte'],
                         entry_premium=opt['cost'],
                         delta=current_delta, iv=current_iv,
+                        current_bid=current_bid,
                         cash_impact=0,
                         note=f'SEED: {opt["type"]} ${opt["strike"]:.0f} {opt["expiry"]} '
                              f'(from REAL portfolio, cost ${opt["cost"]:.2f})')
@@ -683,7 +684,8 @@ class OIEEngine:
                             cost_price=c.strike, strike=c.strike,
                             expiry=c.expiry, dte=c.dte,
                             entry_premium=c.bid, delta=c.delta,
-                            iv=c.iv, cash_impact=c.bid * 100,
+                            iv=c.iv, current_bid=c.bid,
+                            cash_impact=c.bid * 100,
                             note=f'CC ${c.strike:.0f}x{c.expiry} Δ{c.delta:.2f} '
                                  f'RoC{c.annualized_roc_pct:.1f}% Score{c.score}')
                         cash += c.bid * 100
@@ -701,7 +703,8 @@ class OIEEngine:
                             cost_price=c.strike, strike=c.strike,
                             expiry=c.expiry, dte=c.dte,
                             entry_premium=c.bid, delta=c.delta,
-                            iv=c.iv, cash_impact=c.bid * 100,
+                            iv=c.iv, current_bid=c.bid,
+                            cash_impact=c.bid * 100,
                             note=f'CSP ${c.strike:.0f}x{c.expiry} Δ{c.delta:.2f} '
                                  f'RoC{c.annualized_roc_pct:.1f}% Score{c.score}')
                         cash += c.bid * 100
@@ -1176,24 +1179,6 @@ class OIEEngine:
         print(f"     Cash buffer:      {cash_pct:>11.1f}%")
         print()
 
-        if options:
-            print(f"  📊 OPTIONS ({len(options)})")
-            print(f"  {'ID':>4s} {'Ticker':<6s} {'Type':>5s} {'Strike':>8s} {'Expiry':>12s} "
-                  f"{'Qty':>5s} {'Entry':>8s} {'Bid':>8s} {'P&L':>10s} {'Cap%':>7s} {'Δ':>6s} {'DTE':>4s}")
-            print(f"  {'-'*4} {'-'*6} {'-'*5} {'-'*8} {'-'*12} {'-'*5} {'-'*8} {'-'*8} {'-'*10} {'-'*7} {'-'*6} {'-'*4}")
-            for o in sorted(options, key=lambda o: (o['ticker'], o['expiry'] or '')):
-                entry = o['entry_premium'] or 0
-                bid = o['current_bid'] or 0
-                qty = abs(o['qty'])
-                pnl = (entry - bid) * qty * 100
-                profit_pct = ((entry - bid) / entry * 100) if entry > 0 else 0
-                delta = o['current_delta'] or 0
-                dte = o.get('dte_initial', '?')
-                print(f"  {o['id']:>4d} {o['ticker']:<6s} {o['pos_type']:>5s} ${o['strike']:>7,.2f} "
-                      f"{o['expiry'] or '':>12s} {qty:>4,.0f} "
-                      f"${entry:>7,.2f} ${bid:>7,.2f} ${pnl:>+9,.2f} "
-                      f"{profit_pct:>6.1f}% {delta:>+5.3f} {str(dte):>4s}")
-
         # Stocks (reference only — for CC tracking, not screened)
         if stocks:
             print(f"\n  📈 STOCKS ({len(stocks)} tickers, reference — NOT screened)")
@@ -1214,12 +1199,134 @@ class OIEEngine:
         print(f"     {'─'*30}")
         print(f"     Paper NLV:              ${paper_nlv:>12,.2f}")
 
-        events = self.db.get_recent_events(8)
-        if events:
+        # ── Options table (right above events) ──
+        if options:
+            # Capt% = percentage of premium captured. Positive = profit locked in
+            # (can close for less than received), negative = underwater.
+            print(f"\n  📊 OPTIONS ({len(options)})")
+            print(f"  {'Ticker':<6s}  {'Type':<4s}  {'Strike':>7s}  {'Expiry':>10s}  "
+                  f"{'Qty':>3s}  {'Entry':>7s}  {'Bid':>7s}  "
+                  f"{'P&L':>10s}  {'Capt%':>6s}  {'Δ':>6s}  {'DTE':>3s}")
+            print(f"  {'─'*6}  {'─'*4}  {'─'*7}  {'─'*10}  "
+                  f"{'─'*3}  {'─'*7}  {'─'*7}  "
+                  f"{'─'*10}  {'─'*6}  {'─'*6}  {'─'*3}")
+            for o in sorted(options, key=lambda o: (o['ticker'], o['expiry'] or '')):
+                entry = o['entry_premium'] or 0
+                bid = o['current_bid'] or 0
+                qty = abs(o['qty'])
+                pnl = (entry - bid) * qty * 100
+                profit_pct = ((entry - bid) / entry * 100) if entry > 0 else 0
+                delta = o['current_delta'] or 0
+                dte = o.get('dte_initial', '?')
+                print(f"  {o['ticker']:<6s}  {o['pos_type']:<4s}  "
+                      f"${o['strike']:>6,.0f}  {str(o['expiry'] or ''):>10s}  "
+                      f"{qty:>3,.0f}  ${entry:>6,.2f}  ${bid:>6,.2f}  "
+                      f"${pnl:>+9,.2f}  {profit_pct:>5.1f}%  "
+                      f"{delta:>+6.3f}  {str(dte):>3s}")
+
+        # ── Recent events table — option trades shown individually,
+        #     stock seeds collapsed into one line ──
+        all_trades = self.db.get_recent_events(50)
+        if all_trades:
             print(f"\n  📋 RECENT EVENTS")
-            for e in events:
-                ticker_str = f"[{e['ticker']}]" if e['ticker'] else ''
-                print(f"  [{e['ts'][:19]}] {e['event']:12s} {ticker_str} {e['detail'][:100]}")
+            print(f"  {'Time':<9s} {'Event':<28s} {'Ticker':<6s} {'Strike':>8s} "
+                  f"{'Expiry':>12s} {'P&L':>9s}  Detail")
+            print(f"  {'─'*9} {'─'*28} {'─'*6} {'─'*8} {'─'*12} {'─'*9}  {'─'*6}")
+
+            # Separate option trades from stock/portfolio seeds
+            option_trades = []
+            stock_seeds = []
+            portfolio_seed = None
+
+            for e in all_trades:
+                if e['event'] in ('OPEN_CALL', 'OPEN_PUT', 'CLOSE', 'EXPIRE', 'ASSIGN'):
+                    option_trades.append(e)
+                elif e['event'] == 'SEED':
+                    if e['ticker']:
+                        stock_seeds.append(e)
+                    else:
+                        portfolio_seed = e
+
+            # Collapse stock seeds into one line
+            if stock_seeds:
+                seed_count = len(stock_seeds)
+                seed_ts = stock_seeds[0]['ts'][11:19] if len(stock_seeds[0]['ts']) >= 19 else ''
+                print(f"  {seed_ts:<9s} {'📦 SEED (stocks)':<28s} "
+                      f"{'':<6s} {'—':>8s} {'—':>12s} {'—':>9s}  "
+                      f"{seed_count} tickers seeded")
+
+            if portfolio_seed:
+                pts = portfolio_seed['ts'][11:19] if len(portfolio_seed['ts']) >= 19 else ''
+                detail = portfolio_seed['detail'] or ''
+                total_str = detail.split('=')[-1].strip() if '=' in detail else detail
+                print(f"  {pts:<9s} {'📦 SEED (portfolio)':<28s} "
+                      f"{'':<6s} {'—':>8s} {'—':>12s} {'—':>9s}  {total_str}")
+
+            # Show option trades individually
+            for e in option_trades:
+                ts = e['ts'][11:19] if len(e['ts']) >= 19 else e['ts'][:8]
+                event_raw = e['event']
+                ticker = e['ticker'] or ''
+                detail = e['detail'] or ''
+                pos_id = e['pos_id']
+
+                pos = self.db.get_position(pos_id) if pos_id else None
+                pos_type = pos['pos_type'] if pos else None
+                strike = pos.get('strike') if pos else None
+                expiry = pos.get('expiry') if pos else None
+                entry_premium = pos.get('entry_premium') if pos else None
+                realized_pnl = pos.get('realized_pnl') if pos else None
+
+                # ── Format event label ──
+                if event_raw == 'OPEN_CALL':
+                    event_label = '🔵 OPEN CC'
+                elif event_raw == 'OPEN_PUT':
+                    event_label = '🔴 OPEN CSP'
+                elif event_raw == 'CLOSE':
+                    reason = detail.split(':')[0] if ':' in detail else 'CLOSE'
+                    if reason == 'ROLL_UP_OUT':
+                        event_label = '🔄 ROLL UP & OUT (CC)'
+                    elif reason == 'ROLL_DOWN_OUT':
+                        event_label = '🔄 ROLL DOWN & OUT (CSP)'
+                    elif reason in ('CLOSE_50PCT', 'CLOSE_TREND'):
+                        event_label = '💰 CLOSE (profit)'
+                    elif reason == 'STOP_DELTA':
+                        event_label = '🛑 STOP (delta)'
+                    elif reason == 'STOP_LOSS':
+                        event_label = '🛑 STOP (loss)'
+                    else:
+                        event_label = f'📕 {reason}'
+                elif event_raw == 'EXPIRE':
+                    event_label = '📅 EXPIRE'
+                elif event_raw == 'ASSIGN':
+                    event_label = '📈 CC ASSIGN' if pos_type == 'CALL' else '📉 CSP ASSIGN'
+                else:
+                    event_label = event_raw
+
+                strike_str = f'${strike:,.0f}' if strike else '—'
+                expiry_str = str(expiry) if expiry else '—'
+
+                if event_raw == 'CLOSE' and realized_pnl is not None:
+                    pnl_str = f'${realized_pnl:+,.0f}'
+                else:
+                    pnl_str = '—'
+
+                if event_raw in ('OPEN_CALL', 'OPEN_PUT'):
+                    detail_str = f'premium ${entry_premium:,.2f}' if entry_premium else detail[:50]
+                elif event_raw == 'CLOSE':
+                    pnl_part = detail.split(': ')[-1].split(',')[0] if ': ' in detail else ''
+                    try:
+                        pnl_val = float(pnl_part)
+                        entry_val = entry_premium or 0
+                        pct = (pnl_val / (entry_val * 100)) * 100 if entry_val > 0 else 0
+                        detail_str = f'{pnl_part} ({pct:+.0f}% captured)'
+                    except (ValueError, ZeroDivisionError):
+                        detail_str = pnl_part
+                else:
+                    detail_str = detail[:60]
+
+                print(f"  {ts:<9s} {event_label:<28s} {ticker:<6s} {strike_str:>8s} "
+                      f"{expiry_str:>12s} {pnl_str:>9s}  {detail_str}")
 
         print(f"  💡 Options P&L: ${realized + option_unrealized:,.2f}")
 

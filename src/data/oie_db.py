@@ -219,11 +219,13 @@ class OIEDB:
                       cost_price: float, strike: float = None,
                       expiry: str = None, dte: int = None,
                       entry_premium: float = 0, delta: float = None,
-                      iv: float = None, cash_impact: float = 0,
-                      note: str = '') -> int:
+                      iv: float = None, current_bid: float = None,
+                      cash_impact: float = 0, note: str = '') -> int:
         """Open a new paper position. Returns position ID."""
         now = datetime.now().isoformat()
         today = now[:10]
+        if current_bid is None:
+            current_bid = entry_premium
 
         cur = self._conn.execute("""
             INSERT INTO paper_positions
@@ -233,7 +235,7 @@ class OIEDB:
             VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (ticker, pos_type, qty, cost_price, strike, expiry,
               dte, today, entry_premium,
-              entry_premium, delta, iv, now))
+              current_bid, delta, iv, now))
         pos_id = cur.lastrowid
 
         event = f'OPEN_{pos_type}'
