@@ -1,8 +1,10 @@
 # Position Sizing & Capital Allocation Standard
 
+> **⚠ STATUS NOTE (2026-08-09)**: This is the **original sizing standard** (2026-07-10). The *current* hard/soft limits and the two-layer guardrail enforcement live in [`guardrails-and-risk-spec.md`](guardrails-and-risk-spec.md) §10 and `config/rules.yaml → position_limits / guardrail_limits`. Read this doc for the **sizing math** (§4), the **recovery-rules playbook** (§7), and the **account-size table** (§8) — those are unique here. Where this doc's limits disagree with `config/rules.yaml`, **the config wins** (e.g. `max_open_positions` is now 10, not the 8 below; the single-position ceiling was raised to 25% with a 15% EMERGENCY tier). The script names below (`daily_run.py`, `portfolio_check.py`) were **never implemented** — the equivalent surfaces are `portfolio.py --health` (guardrail report) and `screener.py` (candidate filtering).
+
 **Version**: 1.0
 **Date**: 2026-07-10
-**Applies to**: All trade decisions — screener, portfolio_check, daily_run
+**Applies to**: All trade decisions — `screener.py`, `portfolio.py`, `oie_engine.py` (the real scripts)
 
 ---
 
@@ -77,20 +79,23 @@ If Shortfall > 0 → 🔴 BLOCK all new CSP positions until resolved.
 
 ## 6. Guardrail Integration Points
 
-### Screener (`screener.py`)
+> The script names in the original version of this section (`daily_run.py`, `portfolio_check.py`) were **never implemented**. The real integration points today are:
+
+### Screener (`scripts/screener.py`)
 - Before output: check all hard limits against current portfolio + proposed trade
 - Hard violations → exclude candidate from results, log reason
 - Soft violations → include candidate but flag with warning icon
 
-### Daily Run (`daily_run.py`)
-- After portfolio snapshot: run all guardrails
+### Portfolio health (`scripts/portfolio.py --health`)
+- After portfolio snapshot: run both guardrail layers (per-trade + staged recovery)
 - Print guardrail report with 🔴 BLOCKED and 🟡 WARNINGS
-- Track daily order count from trade_log (count RECOMMENDED entries today)
-- Stress test: model all CSPs assigned simultaneously
+- Track monthly order count (`_filled_orders_this_month`, BLOCK at > 15 EMERGENCY / > 10 TARGET)
+- Stress test: model all CSPs assigned simultaneously (worst-case assignment)
 
-### Portfolio Check (`portfolio_check.py`)
-- Flag positions exceeding 15% concentration
-- Flag positions approaching 30% drawdown from cost basis
+### OIE paper engine (`scripts/oie_engine.py`)
+- Per-cycle: `GuardrailChecker.check_new_trade(...)` before each paper trade
+- Cash-buffer + CSP-deployment BLOCKs apply to CSPs; CCs exempt (share-secured)
+- `PS` candidates are suggestion-only — never executed/persisted
 
 ## 7. Recovery Rules (When Limits Are Breached)
 

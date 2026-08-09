@@ -1,8 +1,11 @@
 # Profit Target Optimization Spec — Behavioral Guardrails for the Decision Engine
 
+> **⚠ STATUS NOTE (2026-08-09)**: This is the **original PROPOSED design spec** for the OTM-only close gate, per-ticker frequency cap, and the `holding_score.py:147` behavioral fix. These are **now implemented** and documented canonically in [`exit-and-profit-management-spec.md`](exit-and-profit-management-spec.md) §4-5. Read *this* doc for the 60-day decision-review evidence and the gap analysis; read the canonical doc for current behavior. The "decision-review backtest pending" caveat below **remains true** — `scripts/decision_review.py` has no test coverage yet (see [`production-deployment.md`](production-deployment.md) Gap E).
+
 **Version**: v1 (DRAFT — pending review)
 **Date**: 2026-08-02
-**Status**: PROPOSED — UNVALIDATED. No live-order changes until `pytest` passes and the decision-review backtest (§12) reproduces the predicted improvement.
+**Original status**: PROPOSED — UNVALIDATED. No live-order changes until `pytest` passes and the decision-review backtest (§12) reproduces the predicted improvement.
+**Implementation status**: §5/§6 (OTM gate + target_pct-aware weight) and §9 (frequency cap) implemented; §12.2 backtest sign-off still pending.
 **Applies to**: Cash Secured Puts (CSP), Covered Calls (CC), Wheel Strategy.
 **Supersedes / extends**: [`profit-loss-management-spec.md`](profit-loss-management-spec.md) §4.2 (the trend-modulated target is *coded* there; this spec adds the *behavioral guardrails* that actually enforce it).
 **Evidence base**: `scripts/decision_review.py` (60-day live-order analysis) + `db/oie_paper.db`.

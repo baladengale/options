@@ -1,8 +1,10 @@
 # SPEC: 30% Margin Guardrail — System-Wide Enforcement
 
-**Status**: Approved — Ready for Implementation
+> **⚠ STATUS NOTE (2026-08-09)**: This is the **implementation plan**, written 2026-07-18. As of the 2026-08-09 audit it is **only partially implemented**: only `compute_margin_usage()` (`src/risk/monitor.py:103`) exists; the three key functions below (`compute_margin_headroom`, `compute_csp_expiry_concentration`, `validate_margin_for_new_csp`) are **not yet implemented**; the margin check is still a **WARN, not BLOCK**; and `validate_margin_for_new_csp` is **not wired into the OIE loop**. The script named below as the target, `scripts/portfolio_check.py`, **does not exist** — the real surface is `scripts/portfolio.py --health`. This is **Gap B** in [`production-deployment.md`](production-deployment.md) and a documented limitation in [`guardrails-and-risk-spec.md`](guardrails-and-risk-spec.md) §8. Read this doc as the *to-do plan*, not as a description of today's behavior.
+
+**Original status**: Approved — Ready for Implementation (2026-07-18)
+**Current status**: Partially implemented — the 30% margin rule is **not yet enforced** in the paper loop.
 **Date**: 2026-07-18
-**Branch**: main
 
 ---
 

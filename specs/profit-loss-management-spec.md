@@ -1,10 +1,13 @@
 # Profit & Loss Management Spec — Trend-Modulated Profit Booking + Integrated Loss Rules
 
+> **⚠ STATUS NOTE (2026-08-09)**: This is the **original PROPOSED design spec** that drove the implementation. The trend-modulated profit booking it describes is **now implemented** in `src/analysis/profit_management.py` + `src/analysis/exit_management.py` + `src/scoring/holding_score.py`, and is documented canonically in [`exit-and-profit-management-spec.md`](exit-and-profit-management-spec.md). Read *this* doc for the design rationale and evidence; read the canonical doc for what the code actually does today. The "backtest pending" caveat below **remains true** — the trend thresholds (70/85%, trend_composite ≥ 50/70) are not yet validated on your own data (see [`production-deployment.md`](production-deployment.md) Gap A).
+
 **Version**: v1
 **Date**: 2026-08-01
-**Status**: PROPOSED — UNVALIDATED, backtest pending (repo convention: no live-order changes until `pytest` + historical backtest pass)
+**Original status**: PROPOSED — UNVALIDATED, backtest pending (repo convention: no live-order changes until `pytest` + historical backtest pass)
+**Implementation status**: Implemented in code; rule thresholds still UNVALIDATED by backtest.
 **Applies to**: Covered Calls, Cash Secured Puts, Wheel Strategy
-**Related docs**: [`loss-management-playbook.md`](loss-management-playbook.md) (evidence base), [`research_dte_selection.md`](research_dte_selection.md), [`margin-guardrail.md`](margin-guardrail.md), [`../GOAL.md`](../GOAL.md)
+**Related docs**: [`exit-and-profit-management-spec.md`](exit-and-profit-management-spec.md) (canonical current-state), [`loss-management-playbook.md`](loss-management-playbook.md) (evidence base), [`research_dte_selection.md`](research_dte_selection.md), [`margin-guardrail.md`](margin-guardrail.md), [`../GOAL.md`](../GOAL.md)
 
 ---
 
