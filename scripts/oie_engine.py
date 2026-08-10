@@ -1240,9 +1240,9 @@ class OIEEngine:
         all_trades = self.db.get_recent_events(50)
         if all_trades:
             print(f"\n  📋 RECENT EVENTS")
-            print(f"  {'Time':<9s} {'Event':<28s} {'Ticker':<6s} {'Strike':>8s} "
+            print(f"  {'Date Time':<19s} {'Event':<28s} {'Ticker':<6s} {'Strike':>8s} "
                   f"{'Expiry':>12s} {'P&L':>9s}  Detail")
-            print(f"  {'─'*9} {'─'*28} {'─'*6} {'─'*8} {'─'*12} {'─'*9}  {'─'*6}")
+            print(f"  {'─'*19} {'─'*28} {'─'*6} {'─'*8} {'─'*12} {'─'*9}  {'─'*6}")
 
             # Separate option trades from stock/portfolio seeds
             option_trades = []
@@ -1261,21 +1261,21 @@ class OIEEngine:
             # Collapse stock seeds into one line
             if stock_seeds:
                 seed_count = len(stock_seeds)
-                seed_ts = stock_seeds[0]['ts'][11:19] if len(stock_seeds[0]['ts']) >= 19 else ''
-                print(f"  {seed_ts:<9s} {'📦 SEED (stocks)':<28s} "
+                seed_ts = (stock_seeds[0]['ts'][0:10] + ' ' + stock_seeds[0]['ts'][11:19]) if len(stock_seeds[0]['ts']) >= 19 else ''
+                print(f"  {seed_ts:<19s} {'📦 SEED (stocks)':<28s} "
                       f"{'':<6s} {'—':>8s} {'—':>12s} {'—':>9s}  "
                       f"{seed_count} tickers seeded")
 
             if portfolio_seed:
-                pts = portfolio_seed['ts'][11:19] if len(portfolio_seed['ts']) >= 19 else ''
+                pts = (portfolio_seed['ts'][0:10] + ' ' + portfolio_seed['ts'][11:19]) if len(portfolio_seed['ts']) >= 19 else ''
                 detail = portfolio_seed['detail'] or ''
                 total_str = detail.split('=')[-1].strip() if '=' in detail else detail
-                print(f"  {pts:<9s} {'📦 SEED (portfolio)':<28s} "
+                print(f"  {pts:<19s} {'📦 SEED (portfolio)':<28s} "
                       f"{'':<6s} {'—':>8s} {'—':>12s} {'—':>9s}  {total_str}")
 
             # Show option trades individually
             for e in option_trades:
-                ts = e['ts'][11:19] if len(e['ts']) >= 19 else e['ts'][:8]
+                ts = (e['ts'][0:10] + ' ' + e['ts'][11:19]) if len(e['ts']) >= 19 else e['ts'][:8]
                 event_raw = e['event']
                 ticker = e['ticker'] or ''
                 detail = e['detail'] or ''
@@ -1336,7 +1336,7 @@ class OIEEngine:
                 else:
                     detail_str = detail[:60]
 
-                print(f"  {ts:<9s} {event_label:<28s} {ticker:<6s} {strike_str:>8s} "
+                print(f"  {ts:<19s} {event_label:<28s} {ticker:<6s} {strike_str:>8s} "
                       f"{expiry_str:>12s} {pnl_str:>9s}  {detail_str}")
 
         print(f"  💡 Options P&L: ${realized + option_unrealized:,.2f}")
