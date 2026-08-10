@@ -94,6 +94,7 @@ def decide_exit_action(
     trend_ctx: Optional[TrendContext] = None,
     capital_scarcity: Optional[str] = None,
     csp_paused: bool = False,
+    premium_collected: float = 0.0,
     cfg=None,
 ) -> ExitDecision:
     """Decide the exit action for one option position.
@@ -122,6 +123,11 @@ def decide_exit_action(
         trend_ctx: the trend/sentiment/IV stack (None → base behavior).
         capital_scarcity: SCARCE / NORMAL / ABUNDANT.
         csp_paused: True when CSP redeployment is over its deployment cap.
+        premium_collected: total credit banked on this trade
+            (entry × qty × 100). Selects the absolute-loss band so a large
+            premium isn't cut on noise — the catch-all floor scales with the
+            premium. 0 (default) selects the smallest band, matching the old
+            flat-floor behavior.
         cfg: Config instance (default: module singleton).
 
     Returns:
@@ -158,13 +164,16 @@ def decide_exit_action(
     if premium_action.acts:
         return premium_action
 
-    # 3c. Absolute catch-all.
-    heavy = float(cfg.stop_heavy_loss_abs)
-    if pnl_dollars < -abs(heavy):
+    # 3c. Absolute catch-all — tiered by premium collected so a large credit
+    #     isn't exited on normal noise (the old flat $1k fired at 0.17× of a
+    #     $6k CSP). The DTE premium tiers (3×/2×/1.5×) above stay the binding
+    #     constraint for ordinary losses; this floor catches a genuine rout.
+    heavy = float(cfg.stop_heavy_loss_for_premium(premium_collected))
+    if pnl_dollars < -heavy:
         return ExitDecision(
             close_reason=STOP_LOSS,
             reason=f"Heavy loss ${pnl_dollars:,.0f} < -${heavy:,.0f} "
-                   f"catch-all — close.",
+                   f"catch-all (premium ${premium_collected:,.0f} band) — close.",
             warn=warn)
 
     # No action this cycle. Carry the advisory (if any) so the engine can log.

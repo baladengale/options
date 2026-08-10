@@ -318,8 +318,12 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             score += 1.5
             decision = '⚠️  EARNINGS IN DTE — close before'
 
-    # Heavy loss catch-all - NOW THESIS-AWARE
-    if pl < -1000 and 'STOP' not in decision:
+    # Heavy loss catch-all - NOW THESIS-AWARE, premium-tiered
+    # The flat −$1k was punitive for large premiums (fired at 0.17× of a $6k
+    # CSP). Now scales with the trade's total credit via config bands.
+    premium_collected = abs(pos.get('cost', 0) or 0) * abs(pos.get('qty', 0) or 0) * 100
+    heavy_floor = cfg.stop_heavy_loss_for_premium(premium_collected)
+    if pl < -heavy_floor and 'STOP' not in decision:
         # Use thesis validation instead of generic "evaluate exit"
         try:
             from src.analysis.thesis_validator import quick_thesis_check

@@ -34,7 +34,8 @@ This is why the framework computes a rich signal stack (trend, sentiment, IV) fo
 3. LOSS SIDE:
    3a DELTA       |Δ| ≥ critical                                → STOP_DELTA (CSP 0.60) / ROLL_UP_OUT (CC 0.60, DTE-aware)
    3b PREMIUM     CSP only, loss_multiple ≥ DTE-tier close      → STOP_LOSS
-   3c ABSOLUTE    pnl_dollars < −heavy_loss_abs (−$1000)        → STOP_LOSS (both CC & CSP)
+   3c ABSOLUTE    pnl_dollars < −heavy_loss_for_premium(premium_collected)  → STOP_LOSS (both CC & CSP)
+                  (premium-tiered floor: −$1k / −$2k / −$5k / −$8k by total credit banked)
 ```
 
 **Action vocabulary** (`:53–65`): `CLOSE_50PCT`, `CLOSE_TREND`, `STOP_DELTA`, `STOP_LOSS`, `EXPIRE`, `CC_ASSIGN`, `CSP_ASSIGN`, `ROLL_UP_OUT`, `ROLL_DOWN_OUT`, `WARN_CC_DELTA`.
@@ -136,15 +137,26 @@ IF pd.action == ACTION_CLOSE  AND  profit_captured ≥ base (50%):
 | `21–30` (mid) | 1.0× (`mid_alert`) | 2.0× (`mid_close`) |
 | `≤ 21` (near, gamma) | 0.5× (`near_alert`) | 1.5× (`near_close`) |
 
-### 5.3 Absolute catch-all (`exit_management.py:162`)
+### 5.3 Absolute catch-all — premium-tiered (`exit_management.py:162`)
 
-`pnl_dollars < −heavy_loss_abs` (`−$1000`) → `STOP_LOSS`, both CC and CSP.
+`pnl_dollars < −heavy_loss_for_premium(premium_collected)` → `STOP_LOSS`, both CC and CSP.
+
+The floor **scales with total premium collected** (`entry × qty × 100`) so a large credit isn't cut on normal ITM drift. The flat `−$1,000` predecessor fired at a 0.17× give-back on a $6,000 CSP — pure theta noise — and because it sat *after* the premium tier (5.2) in precedence, it pre-empted the 1.5×/2×/3× tiers for any premium above ~$667, making them dead code on every meaningful trade.
+
+| Total premium collected | Max-loss floor | As % of premium |
+|---|---|---|
+| < $500 | $1,000 | ≥ 200% (premium tier governs) |
+| $500 – $2,000 | $2,000 | 100–400% |
+| $2,000 – $5,000 | $5,000 | 100–250% |
+| > $5,000 | $8,000 | ≤ 133% (e.g. a $6k AMD CSP cuts at −$8k, ~1.33×) |
+
+The bottom band preserves the legacy `−$1,000` behavior for small trades; the top band lets the DTE-adjusted premium tier (5.2) be the binding constraint for ordinary losses, with the floor reserved for a genuine rout. **Config key**: `stop_loss.delta.heavy_loss_bands` (list of `{premium_max, max_loss}` rows). Legacy `heavy_loss_abs: N` (single scalar) still works — collapsed to one band at `.inf`.
 
 ### 5.4 Loss-side trend overlay (`profit_management.py:256 loss_alert_should_hard_stop`)
 
 At the 2× premium alert: if `trend_composite < 40` → treat as hard stop (close/roll immediately); if `trend ≥ 40` → one extra roll attempt, then forced decision. **Trend never overrides the 3× / critical-delta hard stops** decided upstream.
 
-**Config** (`stop_loss`): `premium_stop.far_dte: 30`, `mid_dte: 21`, alert/close multiples as above; `delta.csp_critical: 0.60`, `csp_itm: 0.50`, `csp_decision: 0.50`, `cc_critical: 0.50`, `cc_close: 0.60`, `cc_assign_dte: 14`, `heavy_loss_abs: 1000`.
+**Config** (`stop_loss`): `premium_stop.far_dte: 30`, `mid_dte: 21`, alert/close multiples as above; `delta.csp_critical: 0.60`, `csp_itm: 0.50`, `csp_decision: 0.50`, `cc_critical: 0.50`, `cc_close: 0.60`, `cc_assign_dte: 14`, `heavy_loss_bands: [{≤500→1000}, {≤2000→2000}, {≤5000→5000}, {>5000→8000}]` (legacy `heavy_loss_abs` scalar still accepted as a single-band fallback).
 
 ---
 

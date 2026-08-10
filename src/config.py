@@ -289,8 +289,50 @@ class Config:
 
     @property
     def stop_heavy_loss_abs(self) -> float:
-        """Unconditional close at this absolute $ loss (catch-all)."""
+        """Unconditional close at this absolute $ loss (catch-all).
+
+        Legacy scalar — still honored as a single-band fallback when
+        ``heavy_loss_bands`` is absent. New config should use the band table
+        via ``stop_heavy_loss_for_premium``.
+        """
         return self._data['stop_loss']['delta'].get('heavy_loss_abs', 1000)
+
+    @property
+    def stop_heavy_loss_bands(self) -> list[tuple[float, float]]:
+        """Tiered absolute-loss floor keyed on total premium collected.
+
+        Returns a list of ``(premium_max, max_loss)`` tuples sorted ascending
+        by ``premium_max``. ``premium_max`` is the upper edge of each band;
+        ``.inf`` is the catch-everything top band. Falls back to a single
+        ``(inf, heavy_loss_abs)`` band when only the legacy scalar is present,
+        so old configs keep working unchanged.
+        """
+        import math
+        delta_cfg = self._data.get('stop_loss', {}).get('delta', {})
+        raw_bands = delta_cfg.get('heavy_loss_bands')
+        if not raw_bands:
+            return [(math.inf, float(delta_cfg.get('heavy_loss_abs', 1000)))]
+        out = []
+        for b in raw_bands:
+            pm = b.get('premium_max', math.inf)
+            pm = math.inf if pm in ('.inf', 'inf', float('inf')) else float(pm)
+            out.append((pm, float(b.get('max_loss', 1000))))
+        out.sort(key=lambda t: t[0])
+        return out
+
+    def stop_heavy_loss_for_premium(self, premium_collected: float) -> float:
+        """Return the absolute $ loss floor for a trade of this premium size.
+
+        Picks the first band whose ``premium_max`` ≥ ``premium_collected``.
+        A ``premium_collected`` of 0 (unknown) returns the smallest band —
+        matching the old flat-floor behavior for un-instrumented call sites.
+        """
+        bands = self.stop_heavy_loss_bands
+        pc = float(premium_collected or 0)
+        for premium_max, max_loss in bands:
+            if pc <= premium_max:
+                return max_loss
+        return bands[-1][1]   # top band (defensive — its premium_max is inf)
 
     # ═══════════════════════════════════════════════════════════
     # ROLLING DISCIPLINE

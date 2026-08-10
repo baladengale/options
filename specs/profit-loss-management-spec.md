@@ -52,7 +52,7 @@ The 50% rule is one of the most backtested rules in retail options. It is NOT wr
 | Component | File | What it does today | Gap |
 |---|---|---|---|
 | Adaptive profit target | `src/analysis/adaptive_profit.py` | 50% base; 70%/85% only when capital abundant; 21 DTE hard floor | **No trend/sentiment/IV input**; extension is capital-only |
-| Option exit scoring | `src/scoring/holding_score.py` `_score_option` | `profit_captured >= 50` → CLOSE; `>= 70` → CLOSE; thesis check only for `pl < -$1000` | **Flat profit threshold**; trend-aware thesis is loss-side only |
+| Option exit scoring | `src/scoring/holding_score.py` `_score_option` | `profit_captured >= 50` → CLOSE; `>= 70` → CLOSE; thesis check for `pl < -heavy_loss_for_premium(premium_collected)` (premium-tiered: −$1k/−$2k/−$5k/−$8k) | **Flat profit threshold**; trend-aware thesis is loss-side only |
 | CC config | `config/rules.yaml` `cc_management` | `close_at_profit_pct: 0.50` | No CSP profit rule; no trend modulation |
 | CSP config | `config/rules.yaml` | — | **No explicit CSP profit-booking rule at all** |
 | Entry signals | `src/signals/generator.py` + `src/analysis/trend.py` | `TREND_COMPOSITE`, `SENTIMENT_SCORE`, `IV_RANK` drive STRONG_WRITE/WRITE/HOLD/AVOID | **Computed for entry only — never reused for exit** |

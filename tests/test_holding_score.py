@@ -100,9 +100,11 @@ def test_option_near_dte_15x_stop_gamma():
 
 
 def test_option_heavy_loss_catchall():
-    # pl < -1000 with no stronger trigger → thesis-aware message (or UNDERWATER fallback)
+    # The absolute catch-all is now premium-tiered: a $1,120 credit (cost=11.2 ×
+    # qty=1 × 100) lands in the $500–$2000 band whose floor is $2,000. So pl
+    # must clear −$2,000 (not the legacy −$1,000) to trip it.
     s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-5.0,
-                           pl=-1500, today=TODAY, yf_client=None)
+                           pl=-2500, today=TODAY, yf_client=None)
     # When MoomooClient is available: thesis-aware path ("Position Down — Thesis intact")
     # When unavailable: fallback ("UNDERWATER — Monitor thesis, not price")
     assert 'UNDERWATER' in dec or 'Position Down' in dec or 'Thesis' in dec

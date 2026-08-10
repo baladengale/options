@@ -215,7 +215,7 @@ src/data/                 src/filters/                src/scoring/
    - **CSP in uptrend = good** (stock runs *away* from strike) → extend the 50% target to 70% / 85% when trend + sentiment + IVR all confirm.
    - **CC in uptrend = bad** (stock runs *into* strike) → never extend; instead **roll up-and-out** to keep shares.
    - Hard gates override every extension: **DTE ≤ 21** (gamma floor), **capital scarcity**, **earnings in DTE**.
-3. **Loss side** — delta gates (CSP cut at |Δ|≥0.60; CC roll-up-out at Δ≥0.60), premium-multiple stops (DTE-adjusted: 3×/2×/1.5×), absolute catch-all (−$1,000).
+3. **Loss side** — delta gates (CSP cut at |Δ|≥0.60; CC roll-up-out at Δ≥0.60), premium-multiple stops (DTE-adjusted: 3×/2×/1.5×), absolute catch-all (**premium-tiered**: −$1k / −$2k / −$5k / −$8k by total credit banked, so a large premium isn't cut on ITM noise).
 
 Every threshold above is in `config/rules.yaml`. Full formulas + decision tables in [`specs/exit-and-profit-management-spec.md`](specs/exit-and-profit-management-spec.md).
 
@@ -297,7 +297,7 @@ pytest tests/ -v --tb=short                                  # full suite
 pytest tests/ --cov=src --cov-report=term --cov-fail-under=85 # coverage gate (CI)
 ```
 
-**Current state (audited)**: **701 tests pass, 0 failures, 17 skipped** (skips require live moomoo/yfinance). Pure-logic strategy modules are well covered — `profit_management` 93%, `exit_management`/`trend` 89%, `credit_spread` 90%, `collar_check`/`holdings_exit` 100%, `guardrails/limits` 85%. Overall coverage reads ~57% only because the I/O-heavy client modules (`moomoo_client`, `yfinance_client`, `compute`) need live network to exercise. Run the live-data tests separately on a machine with OpenD up.
+**Current state (audited)**: **715 tests pass, 0 failures, 17 skipped** (skips require live moomoo/yfinance). Pure-logic strategy modules are well covered — `profit_management` 93%, `exit_management`/`trend` 89%, `credit_spread` 90%, `collar_check`/`holdings_exit` 100%, `guardrails/limits` 85%. Overall coverage reads ~57% only because the I/O-heavy client modules (`moomoo_client`, `yfinance_client`, `compute`) need live network to exercise. Run the live-data tests separately on a machine with OpenD up.
 
 Key test files and what they validate:
 - `tests/test_screener_scoring.py` — ticker scoring + contract penalty with exact expected values

@@ -355,11 +355,19 @@ profit_captured = (entry_premium − current_bid) / entry_premium × 100   [%]
 loss_multiple   = |profit_captured| / 100   when profit_captured < 0
   (= how many × the entry premium you've lost; e.g. −200% → 2.0×)
 
+premium_collected = entry_premium × qty × 100   [total credit banked, $]
+  (selects the absolute-loss band — see heavy_loss_for_premium below)
+
+heavy_loss_for_premium(premium_collected) → max_loss   [$ floor for the catch-all]
+  = first band in heavy_loss_bands whose premium_max ≥ premium_collected
+  e.g. $300 → $1,000 · $1,200 → $2,000 · $3,000 → $5,000 · $6,000 → $8,000
+  (legacy heavy_loss_abs scalar collapses to a single (inf, N) band)
+
 drawdown_from_basis = (adjusted_basis − current_price) / adjusted_basis   [decimal]
   where adjusted_basis = assignment_strike − Σ(all premiums collected in the campaign)
 ```
 
-**Validation**: ✓ All internally consistent and standard. The `adjusted_basis` carries the whole-campaign premium (puts + calls) — brokers don't track this; the engine does (`src/risk/monitor.py:130` `campaign_adjusted_basis`).
+**Validation**: ✓ All internally consistent and standard. The `adjusted_basis` carries the whole-campaign premium (puts + calls) — brokers don't track this; the engine does (`src/risk/monitor.py:130` `campaign_adjusted_basis`). The `heavy_loss_for_premium` band lookup replaced the flat `−$1,000` floor (2026-08-09), which pre-empted the DTE premium tiers for any premium above ~$667 — see [exit-and-profit-management-spec.md §5.3](exit-and-profit-management-spec.md).
 
 ---
 
@@ -382,7 +390,7 @@ drawdown_from_basis = (adjusted_basis − current_price) / adjusted_basis   [dec
 | 13 | Put/Call ratios | `compute.py:283` | ✓ | Standard |
 | 14 | Black-Scholes + Greeks | (spec only) | ✓ | Matches Macroption/Wikipedia; European (not American) |
 | 15 | PCS max_loss / RoC / credit_ratio | `credit_spread.py:45` | ✓ | Defined-risk, cash-backed |
-| 16 | profit_captured / loss_multiple / drawdown | exit_management, holding_score, holdings_exit | ✓ | Internally consistent |
+| 16 | profit_captured / loss_multiple / heavy_loss band / drawdown | exit_management, holding_score, config, holdings_exit | ✓ | Internally consistent; band lookup replaces flat −$1k (2026-08-09) |
 
 **Bottom line**: the formulas that drive decisions (RoC, IV Rank, RSI, MACD, the trend composite, the exit math) are **correct against authoritative sources**. Two known simplifications (ADX smoothing, GEX scaling) are **acceptable for the bucketed/operational use** the framework makes of them and are flagged for the backtest harness. No formula is *wrong* in a way that would mislead a decision at the current thresholds.
 

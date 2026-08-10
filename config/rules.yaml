@@ -184,7 +184,18 @@ stop_loss:
     cc_close: 0.60       # CC Δ ≥ 0.60 AND DTE > cc_assign_dte → roll up-and-out for credit
     cc_decision: 0.50    # CC Δ in [cc_decision, cc_close) → warn only, no auto-action
     cc_assign_dte: 14    # CC Δ ≥ cc_close AND DTE ≤ this → HOLD for assignment (wheel turn)
-    heavy_loss_abs: 1000 # unconditional close at this absolute $ loss (catch-all)
+    # Layer 3: Absolute $ catch-all. Tiered by TOTAL PREMIUM COLLECTED so a
+    # big premium isn't exited on noise (the old flat $1k fired at 0.17× of a
+    # $6k AMD CSP) and the DTE premium tiers (3×/2×/1.5×) remain the binding
+    # constraint for normal losses. Lookup: first band whose premium_max ≥ the
+    # trade's total premium (entry × qty × 100).
+    heavy_loss_bands:
+      - { premium_max: 500,  max_loss: 1000 }   # small trade — legacy $1k floor
+      - { premium_max: 2000, max_loss: 2000 }   # mid trade
+      - { premium_max: 5000, max_loss: 5000 }
+      - { premium_max: .inf, max_loss: 8000 }   # big trade (e.g. $6k AMD) → 1.33× give-back
+    # Legacy fallback: if heavy_loss_bands is absent, a single
+    # heavy_loss_abs: N still works (treated as one band at .inf).
 
 # ── Rolling Discipline (UNVALIDATED — backtest pending, playbook §3) ──
 rolling:

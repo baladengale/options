@@ -489,6 +489,7 @@ class OIEEngine:
                 delta = abs(pos.get('current_delta', 0) or 0)
                 strategy = 'CC' if pos_type == 'CALL' else 'CSP'
                 pnl_dollars = (entry - current_bid) * qty * 100  # negative = loss
+                premium_collected = entry * qty * 100   # total credit banked
 
                 # ── Single exit decision core (src/analysis/exit_management.py) ──
                 # Composes the trend-modulated profit side (decide_profit_target)
@@ -500,7 +501,8 @@ class OIEEngine:
                 edec = decide_exit_action(
                     strategy, profit_captured, dte, delta, pnl_dollars,
                     tctx, capital_scarcity=self._capital_scarcity(),
-                    csp_paused=self._csp_paused(), cfg=self.cfg)
+                    csp_paused=self._csp_paused(),
+                    premium_collected=premium_collected, cfg=self.cfg)
                 close_reason = edec.close_reason
                 roll_decision = edec.roll_decision
                 if edec.warn:

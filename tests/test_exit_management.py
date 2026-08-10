@@ -319,6 +319,87 @@ def test_heavy_loss_boundary_not_fired():
 
 
 # ════════════════════════════════════════════════════════════════════
+# Premium-tiered absolute catch-all (the AMD fix)
+# ════════════════════════════════════════════════════════════════════
+
+def test_heavy_loss_band_small_premium_keeps_legacy_floor():
+    """A $300 premium (<$500 band) uses the −$1,000 floor — unchanged behavior."""
+    d = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                           pnl_dollars=-1200, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False,
+                           premium_collected=300)
+    assert d.close_reason == STOP_LOSS
+
+
+def test_heavy_loss_band_big_premium_lets_normal_noise_breathe():
+    """A $6,000 AMD CSP must NOT stop at −$4,000 (was: STOP_LOSS under the old
+    flat −$1,000 floor). Top-band floor is −$8,000, so −$4,000 holds."""
+    d = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                           pnl_dollars=-4000, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False,
+                           premium_collected=6000)
+    assert not d.acts   # would have been STOP_LOSS under the old flat floor
+
+
+def test_heavy_loss_band_big_premium_cuts_at_top_band():
+    """Same $6,000 CSP at −$8,001 trips the top-band floor."""
+    d = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                           pnl_dollars=-8001, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False,
+                           premium_collected=6000)
+    assert d.close_reason == STOP_LOSS
+    assert 'catch-all' in d.reason.lower()
+
+
+def test_heavy_loss_band_mid_premium_mid_band():
+    """$3,000 premium lands in the $2k–$5k band (floor $5,000)."""
+    hold = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                              pnl_dollars=-4999, trend_ctx=NOTREND,
+                              capital_scarcity='NORMAL', csp_paused=False,
+                              premium_collected=3000)
+    assert not hold.acts
+    stop = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                              pnl_dollars=-5001, trend_ctx=NOTREND,
+                              capital_scarcity='NORMAL', csp_paused=False,
+                              premium_collected=3000)
+    assert stop.close_reason == STOP_LOSS
+
+
+def test_heavy_loss_band_reason_includes_premium():
+    """The STOP_LOSS reason reports the premium for auditability."""
+    d = decide_exit_action('CSP', profit_captured=-50, dte=40, delta=0.30,
+                           pnl_dollars=-9000, trend_ctx=NOTREND,
+                           capital_scarcity='NORMAL', csp_paused=False,
+                           premium_collected=6000)
+    assert 'premium $6,000' in d.reason
+
+
+# ════════════════════════════════════════════════════════════════════
+# Config accessor — band table + legacy fallback
+# ════════════════════════════════════════════════════════════════════
+
+def test_config_band_lookup_matches_loaded_rules():
+    """The accessor reads the band table from config/rules.yaml."""
+    cfg = _cfg()
+    # Smallest band (premium $0) → $1,000
+    assert cfg.stop_heavy_loss_for_premium(0) == 1000
+    # $1,200 premium → $500–$2,000 band → $2,000
+    assert cfg.stop_heavy_loss_for_premium(1200) == 2000
+    # $6,000 premium → top band → $8,000
+    assert cfg.stop_heavy_loss_for_premium(6000) == 8000
+
+
+def test_config_legacy_fallback_when_bands_absent():
+    """A config with only heavy_loss_abs (no bands) falls back to one band."""
+    from src.config import Config
+    cfg = Config.__new__(Config)   # bypass __init__ to inject test data
+    cfg._data = {'stop_loss': {'delta': {'heavy_loss_abs': 1500}}}
+    assert cfg.stop_heavy_loss_bands == [(float('inf'), 1500.0)]
+    assert cfg.stop_heavy_loss_for_premium(0) == 1500
+    assert cfg.stop_heavy_loss_for_premium(999999) == 1500
+
+
+# ════════════════════════════════════════════════════════════════════
 # Priority / precedence
 # ════════════════════════════════════════════════════════════════════
 
