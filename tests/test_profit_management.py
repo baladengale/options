@@ -256,3 +256,44 @@ def test_strategy_case_insensitive():
 def test_unknown_strategy_defaults_to_csp():
     d = decide_profit_target('WIDGET', 55, 40, 0.20, NOTREND, 'NORMAL')
     assert d.strategy == 'CSP' and d.action == PD.ACTION_CLOSE
+
+
+# ── EMERGENCY stage overrides the SCARCE bypass (2026-08-14) ──────
+# bypass_scarce_when_csp_paused is UNVALIDATED. In EMERGENCY recovery
+# (cash buffer < critical OR CSP deployment > 50%) it must never apply —
+# booking profit to repair the balance sheet beats riding a trend extension.
+
+@pytest.fixture
+def bypass_on(monkeypatch):
+    """Force the deployment-aware SCARCE bypass ON regardless of rules.yaml."""
+    from src.config import get_config
+    cfg = get_config()
+    original = cfg._data['profit_take'].get('bypass_scarce_when_csp_paused')
+    cfg._data['profit_take']['bypass_scarce_when_csp_paused'] = True
+    yield True
+    if original is None:
+        cfg._data['profit_take'].pop('bypass_scarce_when_csp_paused', None)
+    else:
+        cfg._data['profit_take']['bypass_scarce_when_csp_paused'] = original
+
+
+def test_bypass_holds_winner_when_csp_paused(bypass_on):
+    """Without emergency: bypass skips GATE 2 → strong trend extends to 85%."""
+    d = decide_profit_target('CSP', 60, 40, 0.20, STRONG, 'SCARCE', csp_paused=True)
+    assert d.action == PD.ACTION_HOLD and d.target_pct == 85
+
+
+def test_emergency_overrides_bypass_and_books_at_base(bypass_on):
+    """EMERGENCY re-enables GATE 2 even with the bypass on and CSP paused."""
+    d = decide_profit_target('CSP', 60, 40, 0.20, STRONG, 'SCARCE',
+                             csp_paused=True, emergency=True)
+    assert d.action == PD.ACTION_CLOSE and d.target_pct == 50
+    assert 'EMERGENCY' in d.reason
+
+
+def test_emergency_reason_only_notes_override_when_bypass_would_have_fired(bypass_on):
+    """The EMERGENCY note appears only when the bypass was actually suppressed."""
+    d = decide_profit_target('CSP', 60, 40, 0.20, STRONG, 'SCARCE',
+                             csp_paused=False, emergency=True)
+    assert d.action == PD.ACTION_CLOSE and d.target_pct == 50
+    assert 'EMERGENCY' not in d.reason

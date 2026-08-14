@@ -96,6 +96,7 @@ def decide_exit_action(
     csp_paused: bool = False,
     premium_collected: float = 0.0,
     cfg=None,
+    emergency: bool = False,
 ) -> ExitDecision:
     """Decide the exit action for one option position.
 
@@ -129,6 +130,9 @@ def decide_exit_action(
             premium. 0 (default) selects the smallest band, matching the old
             flat-floor behavior.
         cfg: Config instance (default: module singleton).
+        emergency: True in EMERGENCY recovery stage — disables the
+            deployment-aware SCARCE bypass so profit books at base (see
+            profit_management.decide_profit_target).
 
     Returns:
         ExitDecision naming the close_reason and/or roll_decision.
@@ -144,7 +148,8 @@ def decide_exit_action(
     # ── 2. Profit side (delegated) ──
     pdec = decide_profit_target(
         strategy, profit_captured, dte, abs(delta),
-        trend_ctx, capital_scarcity=capital_scarcity, csp_paused=csp_paused)
+        trend_ctx, capital_scarcity=capital_scarcity, csp_paused=csp_paused,
+        emergency=emergency)
     profit_side = _from_profit_decision(pdec)
     if profit_side.acts:
         return profit_side

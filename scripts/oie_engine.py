@@ -502,7 +502,8 @@ class OIEEngine:
                     strategy, profit_captured, dte, delta, pnl_dollars,
                     tctx, capital_scarcity=self._capital_scarcity(),
                     csp_paused=self._csp_paused(),
-                    premium_collected=premium_collected, cfg=self.cfg)
+                    premium_collected=premium_collected, cfg=self.cfg,
+                    emergency=self._emergency_stage())
                 close_reason = edec.close_reason
                 roll_decision = edec.roll_decision
                 if edec.warn:
@@ -861,6 +862,32 @@ class OIEEngine:
             if nlv <= 0:
                 return False
             return (csp_liability / nlv) > get_config().max_csp_deployed_pct
+        except Exception:
+            return False
+
+    def _emergency_stage(self) -> bool:
+        """Whether the paper account is in EMERGENCY recovery stage.
+
+        Mirrors live portfolio.py _determine_recovery_stage thresholds:
+        cash buffer < 10% critical OR CSP deployment > 50% → EMERGENCY.
+        EMERGENCY disables the deployment-aware SCARCE bypass in
+        decide_profit_target (booking profit to repair the balance sheet
+        outranks the unvalidated trend extension).
+        """
+        try:
+            positions = self.db.get_active_options()
+            cash = float(self.db.get_state('cash') or 0)
+            nlv = cash + sum(float(p.get('entry_premium', 0) or 0) * abs(p.get('qty', 1)) * 100
+                             for p in positions)
+            if nlv <= 0:
+                return False
+            cash_pct = cash / nlv
+            csp_liability = sum(
+                float(p.get('strike', 0) or 0) * abs(p.get('qty', 1)) * 100
+                for p in positions if p.get('pos_type') == 'PUT'
+            )
+            csp_dep = csp_liability / nlv
+            return cash_pct < 0.10 or csp_dep > 0.50
         except Exception:
             return False
 

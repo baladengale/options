@@ -176,6 +176,8 @@ def _print_macro(client: YFinanceClient):
     print(f"  VIX:        {m.vix:>8,.2f}" if m.vix else "  VIX:           N/A")
     print(f"  Regime:     {m.market_regime:>12}  "
           f"(score: {m.regime_score:+d}, size: {m.position_mult:.0%})")
+    if m.sizing_gate_note:
+        print(f"  Sizing Gate:{'':>6}{m.sizing_gate_note} 🔒")
     print(f"  10Y Yield:  {m.treasury_10y:>8,.2f}%" if m.treasury_10y else "  10Y Yield:     N/A")
     print(f"  2Y Yield:   {m.treasury_2y:>8,.2f}%" if m.treasury_2y else "")
     print(f"  30Y Yield:  {m.treasury_30y:>8,.2f}%" if m.treasury_30y else "")

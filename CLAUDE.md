@@ -143,8 +143,12 @@ A put credit spread (PCS) is the right substitute for a CSP when you want the sa
 ### CSP Pause Triggers (stop new CSPs if ANY true)
 - VIX > 25 | SPY < 200 SMA | Regime ≤ -2 | Cash reserve < 20% | Stock > 15% below cost basis
 
-### Hard Position Limits
-- Single position ≤ 15% net liq | Sector ≤ 25% | CSP deployed ≤ 25% net liq (≤ 10% volatile) | Open positions ≤ 8
+### Credit-Stress Hard Gate
+- HYG/IEF credit regime STRESSED → position size capped at 50% regardless of vote tally (`regime.credit_stress_position_mult_cap`)
+
+### Hard Position Limits (config/rules.yaml is the source of truth)
+- Single position ≤ 25% net liq hard cap (15% in EMERGENCY stage) | Sector ≤ 25% | CSP deployed ≤ 25% net liq (≤ 10% volatile, ≤ 15% EMERGENCY) | Open option positions ≤ 10
+- Collar rule: CC only on ≥100 FREE shares (net of shares committed to open short calls)
 
 ## Local File-Based Database (SQLite)
 

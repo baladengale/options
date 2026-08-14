@@ -40,6 +40,13 @@ regime:
     VOLATILE: [10, 90]
     BEARISH: [0, 100]
 
+  # Credit-stress hard gate (2026-08-14): the vote tally counts STRESSED credit
+  # as a single -1 vote, so full-size positioning can coexist with stressed
+  # credit (e.g. VIX 14.5 + HYG/IEF -14.5% → NEUTRAL score +1, size 75%).
+  # When credit_regime == STRESSED, cap position_mult here regardless of the
+  # tally. null disables the gate.
+  credit_stress_position_mult_cap: 0.50
+
 # ── Option Selection Parameters ──
 options:
   # Delta ranges per strategy and regime
@@ -261,6 +268,9 @@ profit_take:
   # skipped so trend extension can apply. Rationale: if freed capital has no
   # CSP slot to redeploy into, the capital-velocity argument for booking at
   # 50% collapses — let winners ride. Default false (PROPOSED — backtest pending).
+  # EMERGENCY override (2026-08-14): in EMERGENCY recovery stage (cash buffer
+  # < critical OR CSP deployment > 50%) this bypass NEVER applies — balance-sheet
+  # repair books profit at base; see profit_management.decide_profit_target.
   bypass_scarce_when_csp_paused: true   # ON — paper-trading the new logic
   # Loss-side: trend-aware overlay at the 2× premium alert (no threshold changes)
   loss_alert_trend_overlay:

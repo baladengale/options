@@ -63,6 +63,18 @@ class Config:
     def position_mult(self, regime: str) -> float:
         return self._data['regime']['position_mult'].get(regime, 0.5)
 
+    @property
+    def credit_stress_position_mult_cap(self):
+        """Hard cap on position_mult when credit_regime == STRESSED.
+
+        Returns None when the gate is disabled. The regime vote tally only
+        counts stressed credit as one -1 vote; this cap prevents full-size
+        positioning while credit is stressed (rules.yaml
+        regime.credit_stress_position_mult_cap).
+        """
+        cap = self._data.get('regime', {}).get('credit_stress_position_mult_cap')
+        return float(cap) if cap is not None else None
+
     def cash_reserve_pct(self, regime: str) -> float:
         return self._data['regime']['cash_reserve_pct'].get(regime, 0.25)
 

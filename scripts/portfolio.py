@@ -41,6 +41,7 @@ from src.data.guardrails import GuardrailChecker, SECTOR_MAP
 from src.guardrails.limits import GuardrailChecker as StagedGuardrails
 from src.config import get_config
 from src.risk.holdings_exit import evaluate_holding_exit, sma_slope, months_to_recover
+from src.risk.collar_check import check_cc_coverage
 from src.risk.overlap import analyze_overlap
 from src.analysis.profit_management import TrendContext, trend_context_from_snapshot
 from src.analysis.thesis import evaluate_thesis, fetch_thesis_inputs
@@ -112,7 +113,8 @@ def main():
             macro = get_macro_context(yf_macro)
             regime = macro.market_regime
             regime_mult = macro.position_mult
-            print(f"🌍 VIX {macro.vix or 'N/A'} | {regime} | Size: {regime_mult:.0%}")
+            gate = f" [GATE: {macro.sizing_gate_note}]" if macro.sizing_gate_note else ''
+            print(f"🌍 VIX {macro.vix or 'N/A'} | {regime} | Size: {regime_mult:.0%}{gate}")
         except Exception:
             pass
     print()
@@ -278,13 +280,22 @@ def _print_pnl(pf, orders, nlv, today):
 
     if income.monthly:
         print(f"\n  📅 MONTHLY OPTION INCOME")
-        print(f"  {'-'*55}")
-        print(f"  {'Month':<10s} {'Collected':>14s} {'Buybacks':>12s} {'Net':>12s}")
-        print(f"  {'-'*55}")
+        print(f"  {'-'*68}")
+        print(f"  {'Month':<10s} {'Collected':>14s} {'Buybacks':>12s} {'Net':>12s} {'Capture':>10s}")
+        print(f"  {'-'*68}")
         for m in sorted(income.monthly):
             b = income.monthly[m]
+            net = b['collected'] - b['buyback']
+            # Capture ratio = net / collected: how much of the gross premium
+            # actually stayed banked. A low ratio (July 2026: 8.7%) exposes
+            # churn — premium recycled into buybacks instead of income.
+            if b['collected'] > 0:
+                capture = net / b['collected'] * 100
+                cap_str = f"{capture:>9.1f}%" + (' ⚠️' if capture < 30 else '')
+            else:
+                cap_str = f"{'—':>10s}"
             print(f"  {m:<10s} ${b['collected']:>13,.0f} ${b['buyback']:>11,.0f} "
-                  f"${b['collected'] - b['buyback']:>11,.0f}")
+                  f"${net:>11,.0f} {cap_str}")
     print()
 
     # ── Sector concentration ──
@@ -436,8 +447,24 @@ def _build_trend_map(pf, moomoo, yf_client) -> dict:
     return out
 
 
+def _open_cc_contracts(pf) -> dict[str, int]:
+    """Short-call contracts already open per ticker (collar-check input).
+
+    Each open short call commits 100 shares if assigned. The CC recommender
+    must net these out — recommending a 6th call on 500 shares carrying 5
+    open CCs is a naked call (hard-constraint violation). Mirrors the
+    screener's CC_SHARES_COMMITTED gate.
+    """
+    committed: dict[str, int] = {}
+    for o in pf.options.values():
+        if o.get('type') == 'CALL' and o.get('ticker'):
+            committed[o['ticker']] = committed.get(o['ticker'], 0) + abs(o.get('qty', 0))
+    return committed
+
+
 def _score_holdings(pf, moomoo, yf_client, cfg, regime, regime_mult, today):
     rows = []
+    open_ccs = _open_cc_contracts(pf)
     for ticker, pos in pf.stocks.items():
         qty, cost = pos['qty'], pos['cost']
         snap = moomoo.get_stock_snapshot(f'US.{ticker}')
@@ -479,13 +506,22 @@ def _score_holdings(pf, moomoo, yf_client, cfg, regime, regime_mult, today):
                 rows.append((ticker, qty, cost, price, mv, pl_pct, score,
                              f"⚖️  DEAD ZONE {exit_rep.drop_pct:.0%}↓ — hold (thesis check)", False))
         else:
-            best_cc = _find_best_cc(moomoo, ticker, snap, qty, cost, yf_client, regime, regime_mult)
+            # Collar check (SPECS §12.1) — a CC needs ≥100 FREE shares (total
+            # minus those committed to open short calls). collar_check.py is
+            # the shared authority; the screener applies the same netting.
+            n_open_ccs = open_ccs.get(ticker, 0)
+            best_cc = _find_best_cc(moomoo, ticker, snap, qty, cost, yf_client, regime,
+                                    regime_mult, open_cc_contracts=n_open_ccs)
             if best_cc:
                 rows.append((ticker, qty, cost, price, mv, pl_pct, score,
                              f"SELL CC ${best_cc['strike']:.0f} {best_cc['expiry']} @ {best_cc['roc']:.1f}%",
                              True))
             elif qty < 100:
                 rows.append((ticker, qty, cost, price, mv, pl_pct, score, "HOLD (<100 shares)", False))
+            elif not check_cc_coverage(qty, n_open_ccs + 1).ok:
+                rows.append((ticker, qty, cost, price, mv, pl_pct, score,
+                             f"HOLD ({n_open_ccs:.0f} open CC(s) encumber all {qty:.0f} shares — collar check)",
+                             False))
             else:
                 rows.append((ticker, qty, cost, price, mv, pl_pct, score, "HOLD (no suitable CC)", False))
 
@@ -526,6 +562,11 @@ def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, por
     cfg = get_config()
     csp_dep = (pf.csp_liability / nlv) if (nlv and nlv > 0 and pf.csp_liability) else 0.0
     csp_paused = csp_dep > cfg.max_csp_deployed_pct
+    # EMERGENCY recovery stage disables the (unvalidated) SCARCE bypass —
+    # balance-sheet repair beats riding a trend extension. Same thresholds
+    # as _determine_recovery_stage.
+    emergency = bool(portfolio and nlv and
+                     _determine_recovery_stage(portfolio, nlv) == "EMERGENCY")
     roll_recs = []
     print(f"  📊 OPTION DECISIONS:")
     print(f"  {'Code':<26s} {'Qty':>5s} {'DTE':>4s} {'Δ':>7s} {'Bid':>7s} "
@@ -547,7 +588,8 @@ def _score_options(pf, snap_map, yf_client, today, trend_map=None, nlv=None, por
         tctx = trend_map.get(pos.get('ticker'))
         score, dec, _pd = _score_option(pos, current, profit_captured, pos.get('pl', 0), today,
                                         yf_client, trend_ctx=tctx, capital_scarcity=scarcity,
-                                        orders=orders, csp_paused=csp_paused)
+                                        orders=orders, csp_paused=csp_paused,
+                                        emergency=emergency)
         print(f"  {code:<26s} {pos['qty']:>5,.0f} {dte:>4d} {current.delta:>+6.3f} "
               f"${bid:>6,.2f} {profit_captured:>+6.1f}% {score:>5.1f}  {dec}")
         # Collect roll-winner recommendations (recommend-only; net-credit + ≤2 rolls gate).
@@ -662,10 +704,23 @@ def _print_guardrails(pf, orders, nlv):
           f"Option Positions: {gr.open_positions} (max {GuardrailChecker.MAX_OPEN_POSITIONS()})")
     print(f"  Max single: {gr.max_single_position_pct:.0f}% (limit {cfg.max_single_position_pct:.0%}) | "
           f"Max sector: {gr.max_sector_pct:.0f}% (limit {cfg.max_sector_pct:.0%})")
+    # ── CSP coverage quality: cash-secured vs margin-backed ──
+    # "Covered" via margin BP is NOT cash-secured (GOAL #4: never prefer
+    # margin). Surface what fraction of the liability real liquid covers so
+    # the operator sees the backing, not just pass/fail of the stress test.
+    csp_total = gr.worst_case_assignment
+    if csp_total > 0:
+        cash_covered = pf.funds.liquid / csp_total
+        if cash_covered >= 1.0:
+            print(f"  ✅ CSP liability ${csp_total:,.0f} — 100% cash-secured")
+        else:
+            print(f"  🟡 CSP liability ${csp_total:,.0f} — cash-secured only "
+                  f"{cash_covered:.0%} (${pf.funds.liquid:,.0f} liquid); remainder "
+                  f"margin-backed (GOAL #4: never prefer margin — rebuild cash "
+                  f"before any new CSP)")
     if gr.worst_case_shortfall > 0:
-        print(f"  ⚠️  CSP liability ${gr.worst_case_assignment:,.0f} — shortfall ${gr.worst_case_shortfall:,.0f}")
-    else:
-        print(f"  ✅ All CSPs covered — ${gr.worst_case_assignment:,.0f} liability")
+        print(f"  🔴 CSP liability ${gr.worst_case_assignment:,.0f} — stress shortfall "
+              f"${gr.worst_case_shortfall:,.0f} (liquid + BP buffer + CC buffer)")
     for b in gr.blocks:
         print(f"  🔴 BLOCK: {b}")
     for w in gr.warnings:

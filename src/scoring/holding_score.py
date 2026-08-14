@@ -72,12 +72,23 @@ def _score_holding(snap: StockSnapshot, ticker: str, yf_client, regime: str, reg
 
 def _find_best_cc(moomoo, ticker: str, snap, shares: float, cost_basis: float,
                   yf_client, regime: str, regime_mult: float,
-                  allow_below_basis: Optional[bool] = None) -> Optional[dict]:
+                  allow_below_basis: Optional[bool] = None,
+                  open_cc_contracts: int = 0) -> Optional[dict]:
     """Find best covered call candidate for a stock holding.
     GOAL.md rule: Never sell CC below cost basis — unless allow_below_basis, the
     Decision #10 dead-zone path, where a flagged below-basis candidate is
-    surfaced (with months-to-recover) for the operator to consciously choose."""
+    surfaced (with months-to-recover) for the operator to consciously choose.
+
+    Collar gate (SPECS §12.1): open_cc_contracts are short calls already sold
+    against these shares. A CC is only covered if ≥100 shares remain FREE —
+    without this netting, a fully encumbered holding (e.g. 500 shares with 5
+    open CCs) gets a 6th "covered" call recommendation that is actually a
+    naked call (hard-constraint #1 violation). Mirrors the screener's
+    CC_SHARES_COMMITTED gate (scripts/screener.py).
+    """
     if shares < 100:
+        return None
+    if shares - open_cc_contracts * 100 < 100:
         return None
 
     cfg = get_config()
@@ -150,7 +161,8 @@ def _ticker_frequency_ok(pos: dict, today: date, orders: list) -> tuple[bool, st
 
 def _score_option(pos: dict, current, profit_captured: float, pl: float,
                   today: date, yf_client, trend_ctx=None, capital_scarcity=None,
-                  orders=None, csp_paused: bool = False) -> tuple[float, str, object]:
+                  orders=None, csp_paused: bool = False,
+                  emergency: bool = False) -> tuple[float, str, object]:
     """Score an option position 1-10. Returns (score, decision, profit_decision).
 
     Profit booking is delegated to src.analysis.profit_management.decide_profit_target
@@ -165,6 +177,9 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
 
     csp_paused is forwarded to decide_profit_target to enable the deployment-aware
     SCARCE bypass when CSP redeployment is blocked. Default False (no bypass).
+    emergency (EMERGENCY recovery stage) is forwarded to disable that bypass —
+    booking profit to repair the balance sheet outranks the unvalidated
+    trend extension. Default False.
     """
     score = 5.0
     decision = 'HOLD'
@@ -175,7 +190,8 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
     # Profit captured — trend-modulated target (spec §4.2)
     from src.analysis.profit_management import decide_profit_target, ProfitDecision
     pd = decide_profit_target(strategy, profit_captured, dte, delta, trend_ctx,
-                              capital_scarcity, csp_paused=csp_paused)
+                              capital_scarcity, csp_paused=csp_paused,
+                              emergency=emergency)
 
     # ── OTM-only close gate (spec §6) ──
     # Do not auto-close a profitable position when it is far OTM with ample DTE.

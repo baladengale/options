@@ -117,7 +117,26 @@ class MacroData:
     market_regime: str = 'UNKNOWN'                    # BULLISH | NEUTRAL | VOLATILE | BEARISH
     vix_regime: str = 'UNKNOWN'                       # LOW | NORMAL | ELEVATED | HIGH | STRESS
     credit_regime: str = 'UNKNOWN'                    # HEALTHY | CONCERNING | STRESSED
+    sizing_gate_note: str = ''                        # non-empty when a hard gate capped sizing
     fetched_at: str = ''
+
+
+def apply_credit_stress_cap(macro: MacroData, cap) -> None:
+    """Cap macro.position_mult when credit_regime == STRESSED (pure, in-place).
+
+    The multi-condition vote tally counts stressed credit as a single -1 vote,
+    so a calm-VIX/stressed-credit mix still sizes at full regime multiples.
+    This hard gate (rules.yaml regime.credit_stress_position_mult_cap) clamps
+    sizing whenever credit is STRESSED, recording why in sizing_gate_note.
+    ``cap`` of None disables the gate.
+    """
+    if cap is None or macro.credit_regime != 'STRESSED':
+        return
+    if macro.position_mult > cap:
+        macro.sizing_gate_note = (f"credit STRESSED — size capped "
+                                  f"{macro.position_mult:.0%} → {cap:.0%} "
+                                  f"(regime.credit_stress_position_mult_cap)")
+        macro.position_mult = cap
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -670,7 +689,12 @@ class YFinanceClient:
 
         # Position sizing from config (rules.yaml regime.position_mult)
         from src.config import get_config
-        macro.position_mult = get_config().position_mult(macro.market_regime)
+        cfg = get_config()
+        macro.position_mult = cfg.position_mult(macro.market_regime)
+
+        # Credit-stress hard gate — STRESSED credit caps sizing regardless of
+        # the vote tally. See apply_credit_stress_cap docstring.
+        apply_credit_stress_cap(macro, cfg.credit_stress_position_mult_cap)
 
         return macro
 

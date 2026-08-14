@@ -70,6 +70,7 @@ def decide_profit_target(
     trend_ctx: Optional[TrendContext] = None,
     capital_scarcity: Optional[str] = None,
     csp_paused: bool = False,
+    emergency: bool = False,
 ) -> ProfitDecision:
     """Decide the profit-side action for one option position.
 
@@ -90,6 +91,11 @@ def decide_profit_target(
             so trend extension can apply — the capital-velocity argument for
             booking at 50% collapses when freed capital has no CSP slot to
             redeploy into. Default False (no bypass).
+        emergency: True when the guardrail recovery stage is EMERGENCY (cash
+            buffer below critical or CSP deployment at emergency levels).
+            EMERGENCY re-enables GATE 2 even when the deployment-aware bypass
+            is on — booking profit to repair the balance sheet beats letting
+            a winner ride on an unvalidated bypass. Default False.
 
     Returns:
         ProfitDecision naming the target level, action, and reason.
@@ -124,12 +130,17 @@ def decide_profit_target(
     # argument for forcing 50% assumes the freed capital has somewhere better
     # to go — when no CSP slot is available, that assumption fails, so trend
     # extension should apply to qualifying CSPs.
+    # EMERGENCY override: the bypass is UNVALIDATED (playbook §4-§6, backtest
+    # pending). In an EMERGENCY recovery stage it never applies — repairing
+    # the balance sheet (booking profit, freeing liability) outranks riding
+    # an unvalidated extension. Config flag stays on for paper validation.
     bypass_enabled = bool(cfg.profit_take('bypass_scarce_when_csp_paused', False))
-    bypass_active = bypass_enabled and bool(csp_paused)
+    bypass_active = bypass_enabled and bool(csp_paused) and not emergency
     if scarcity == scarcity_override and not bypass_active:
+        note = " — EMERGENCY stage overrides SCARCE bypass" if (emergency and bypass_enabled and csp_paused) else ""
         return _close_at_base(strategy, base, profit_captured, trend_ctx, scarcity,
                               reason=f"Capital {scarcity} — book at base {base:.0f}% "
-                                     f"(capital gate beats trend extension).")
+                                     f"(capital gate beats trend extension{note}).")
 
     # ── CSP: trend extension allowed (stock runs away from short put) ──
     if strategy == 'CSP':
