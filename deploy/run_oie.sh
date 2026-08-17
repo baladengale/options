@@ -21,7 +21,7 @@
 # ═══════════════════════════════════════════════════════════════
 set -uo pipefail
 
-PROJECT_ROOT="/Users/bala/workspace/options"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PATH="$PROJECT_ROOT/.venv"
 LOG_DIR="$PROJECT_ROOT/logs"
 OPEND_BUNDLE_ID="com.moomoo.opend"

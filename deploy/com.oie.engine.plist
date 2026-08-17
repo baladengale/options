@@ -5,19 +5,21 @@
     <key>Label</key>
     <string>com.oie.engine</string>
 
+    <!-- Template: replace YOUR_USERNAME with your macOS username before installing:
+         sed "s/YOUR_USERNAME/$USER/g" deploy/com.oie.engine.plist > ~/Library/LaunchAgents/com.oie.engine.plist -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/bala/workspace/options/deploy/run_oie.sh</string>
+        <string>/Users/YOUR_USERNAME/workspace/options/deploy/run_oie.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/bala/workspace/options</string>
+    <string>/Users/YOUR_USERNAME/workspace/options</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>OPTIONS_HOME</key>
-        <string>/Users/bala/workspace/options</string>
+        <string>/Users/YOUR_USERNAME/workspace/options</string>
     </dict>
 
     <!-- Start at login -->
@@ -34,8 +36,8 @@
 
     <!-- Logs -->
     <key>StandardOutPath</key>
-    <string>/Users/bala/workspace/options/logs/oie_launchd.log</string>
+    <string>/Users/YOUR_USERNAME/workspace/options/logs/oie_launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/bala/workspace/options/logs/oie_launchd.log</string>
+    <string>/Users/YOUR_USERNAME/workspace/options/logs/oie_launchd.log</string>
 </dict>
 </plist>
