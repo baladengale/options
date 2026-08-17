@@ -27,7 +27,7 @@
 | Check | Rule |
 |-------|------|
 | Cash buffer | `< cash_buffer_critical` (10% NLV) |
-| CSP deployed | `> max_csp_deployed_pct` (25% normal; **10% when the checker is constructed with `regime='VOLATILE'/'BEARISH'`** — the OIE engine threads its regime, wired 2026-08-16) |
+| CSP deployed | `> max_csp_deployed_pct` (50% normal; **10% when the checker is constructed with `regime='VOLATILE'/'BEARISH'`** — the OIE engine threads its regime, wired 2026-08-16) |
 
 ### WARNs (soft — surface but don't block)
 | Check | Rule |
@@ -177,7 +177,7 @@ margin_headroom   = max_margin_loan − implied_loan     (additional CSP assigna
 |-------|:---:|:---:|------|
 | Single position | ≤ 25% NLV (target 15%) | — | BLOCK in Layer 2 EMERGENCY (15%) |
 | Sector | ≤ 25% | — | WARN |
-| CSP deployed | ≤ 25% NLV | ≤ 10% (enforced via `regime=`) | BLOCK |
+| CSP deployed | ≤ 50% NLV | ≤ 10% (enforced via `regime=`) | BLOCK |
 | Cash buffer | ≥ 15% (warn) | — | BLOCK at < 10% |
 | Open positions | ≤ 10 | — | WARN |
 | New positions/day | ≤ 10/day config · ≤ 2 per engine cycle (`max_new_positions_per_cycle`) · ≤ 2 profit-closes per ticker/month · 14-day same-strike reopen cooldown | — | cycle/cooldown = engine BLOCK; rest WARN |

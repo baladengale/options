@@ -155,7 +155,7 @@ scoring:
 position_limits:
   max_single_position_pct: 0.25     # 25% max per underlying (GOAL.md hard limit — restored from 0.75 testing override)
   max_sector_pct: 0.25              # 25% max per sector
-  max_csp_deployed_pct: 0.25        # 25% of net liq in CSP (normal)
+  max_csp_deployed_pct: 0.50        # 50% of net liq in CSP (normal) — relaxed 2026-08-17 per TO-DO
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
   max_open_positions: 10             # max active CC/CSP options only (wheel strategy bandwidth)
   max_daily_new_positions: 10        # new trades per day
