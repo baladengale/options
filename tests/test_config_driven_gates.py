@@ -177,7 +177,7 @@ def _positions(csp_liability=20_000):
 
 def test_volatile_regime_tightens_csp_cap():
     from src.data.guardrails import GuardrailChecker
-    # 20% deployment: fine at the 25% normal cap, BLOCKED at the 10% volatile cap
+    # 20% deployment: fine at the 50% normal cap, BLOCKED at the 10% volatile cap
     normal = GuardrailChecker(net_liq=100_000, cash=50_000, buying_power=50_000,
                               open_positions=_positions())
     assert not any('CSP capital deployed' in b for b in normal.check().blocks)
