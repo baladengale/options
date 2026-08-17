@@ -44,7 +44,7 @@ These rules are based on industry research (TastyTrade 200K+ backtested trades, 
 | CSP capital deployed | ≤ 25% of net liq (normal), ≤ 10% (volatile), ≤ 15% (EMERGENCY stage) | 🔴 BLOCK |
 | Cash reserve minimum | See regime table above | 🔴 BLOCK |
 | Open positions (option contracts) | ≤ 10 (management bandwidth) | 🟡 WARN |
-| New positions per day | ≤ 10/day config cap; monthly order guardrail 15 (EMERGENCY) / 30 (target); ≤ 2 profit-taking closes per ticker per month | 🟡 WARN |
+| New positions per day | ≤ 10/day config cap + ≤ 2 per engine cycle (`max_new_positions_per_cycle`); monthly order guardrail 15 (EMERGENCY) / 30 (target); ≤ 2 profit-taking closes per ticker per month (14-day same-strike reopen cooldown) | 🟡 WARN |
 
 ### 4. Delta Adjustments by Regime
 
@@ -58,7 +58,7 @@ These rules are based on industry research (TastyTrade 200K+ backtested trades, 
 
 ### 5. CSP Pause Triggers
 
-Stop opening new CSPs immediately if ANY of these are true:
+Stop opening new CSPs immediately if ANY of these are true (all five enforced by the OIE engine, config `csp_pause`):
 - VIX > 25
 - SPY below 200 SMA
 - Regime score ≤ -2 (VOLATILE or worse)
@@ -95,9 +95,9 @@ Before any new trade, verify ALL of these:
 - [ ] CSP capital deployed ≤ regime limit
 - [ ] Single position ≤ 25% of net liq (15% in EMERGENCY stage)
 - [ ] Sector concentration ≤ 25%
-- [ ] No earnings within DTE window (14 days)
-- [ ] IV Rank ≥ 30
-- [ ] Delta within regime range
+- [ ] No earnings within DTE window (14 days) — engine-enforced when earnings data is known
+- [ ] IV Rank ≥ 30 — enforced when IVR data is present (`options.iv_rank_required: true` makes unknown-IVR reject)
+- [ ] Delta within regime range (plus deep-ITM cap `options.delta.deep_itm_max`)
 - [ ] Bid-ask spread < 5%
 - [ ] OI ≥ 500, volume ≥ 10
 - [ ] RoC ≥ 12% (CSP) or ≥ 8% (CC)

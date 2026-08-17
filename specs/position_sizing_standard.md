@@ -89,7 +89,7 @@ If Shortfall > 0 → 🔴 BLOCK all new CSP positions until resolved.
 ### Portfolio health (`scripts/portfolio.py --health`)
 - After portfolio snapshot: run both guardrail layers (per-trade + staged recovery)
 - Print guardrail report with 🔴 BLOCKED and 🟡 WARNINGS
-- Track monthly order count (`_filled_orders_this_month`, BLOCK at > 15 EMERGENCY / > 10 TARGET)
+- Track monthly order count (`_filled_orders_this_month`, BLOCK at > 15 EMERGENCY / > 30 TARGET — `guardrail_limits.max_monthly_orders_*`)
 - Stress test: model all CSPs assigned simultaneously (worst-case assignment)
 
 ### OIE paper engine (`scripts/oie_engine.py`)

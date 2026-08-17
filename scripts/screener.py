@@ -161,9 +161,10 @@ def main():
             snap = snap_map.get(ticker)
             if snap is None or snap.last_price <= 0:
                 continue
-            # Pre-filter: skip illiquid tickers
-            if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > 5.0:
-                log.debug(f"  {short}: SKIP — spread {snap.bid_ask_spread_pct:.1f}% > 5%")
+            # Pre-filter: skip illiquid tickers (config: liquidity.bid_ask_spread_max_pct)
+            if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > cfg_guard.spread_max_pct:
+                log.debug(f"  {short}: SKIP — spread {snap.bid_ask_spread_pct:.1f}% "
+                          f"> {cfg_guard.spread_max_pct:.0f}%")
                 continue
 
             # Pre-filter: Wheel eligibility (read-only daily check).

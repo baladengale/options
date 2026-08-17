@@ -233,9 +233,9 @@ Risk is enforced in **two complementary layers** plus a holdings-exit framework:
 | **Coverage (collar)** | `src/risk/collar_check.py` | Verifies every CC has ≥100 shares and every CSP has cash — `all_clear` required conceptually before any new trade. | Hard |
 | **Roll discipline** | `src/risk/monitor.py` | Net-credit-only, ≤2 rolls/campaign, ≥30-day extension, broken-position detection. | Hard |
 
-**CSP pause triggers** (stop new CSPs if ANY true): VIX > 25 · SPY < 200 SMA · regime ≤ −2 · cash reserve < 20% · stock > 15% below basis.
+**CSP pause triggers** (stop new CSPs if ANY true — all five enforced by the OIE engine via `Config.should_pause_csp` + per-ticker basis check): VIX > 25 · SPY < 200 SMA · regime ≤ −2 · cash reserve < 20% · stock > 15% below basis.
 
-**Hard position limits**: single position ≤ 15–25% net liq · sector ≤ 25% · CSP deployed ≤ 25% (≤10% volatile) · cash buffer ≥ 10% (block) / 15% (warn) · open positions ≤ 10 · new positions/day ≤ 2 · **margin ≤ 30%** (hard 15-day clear window).
+**Hard position limits**: single position ≤ 25% net liq · sector ≤ 25% · CSP deployed ≤ 25% (≤10% volatile — enforced via regime-aware checker) · cash buffer ≥ 10% (block) / 15% (warn) · open positions ≤ 10 · new positions ≤ 10/day config, 2 per engine cycle (`max_new_positions_per_cycle`), 2 profit-closes per ticker/month, 14-day same-strike reopen cooldown · **margin ≤ 30%** WARN (15-day clear window still unwired; engine BP is cash+fund only, so margin never extends CSP coverage).
 
 Full detail in [`specs/guardrails-and-risk-spec.md`](specs/guardrails-and-risk-spec.md).
 
@@ -263,7 +263,7 @@ python3 skills/oie/scripts/daily_digest.py --skip-screener --skip-oie # fast mod
 
 **Continuous mode — macOS LaunchAgent** (recommended for the OIE):
 ```bash
-cp deploy/com.oie.engine.plist ~/Library/LaunchAgents/
+sed "s/YOUR_USERNAME/$USER/g" deploy/com.oie.engine.plist > ~/Library/LaunchAgents/com.oie.engine.plist
 launchctl load ~/Library/LaunchAgents/com.oie.engine.plist
 
 launchctl list | grep oie                                       # live PID + exit code

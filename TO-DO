@@ -1,4 +1,3 @@
 ## Explore how safely we can relax this guardrails? Will it add more risk? we wanted to make sure framework will let me take more posistion
-  🔴 BLOCK: Cash buffer 8.9% < 10% critical. Keep ≥25% cash. Close positions or add funds.
+  🔴 BLOCK: Cash buffer 8.9% < 10% critical. Keep ≥15% cash. Close positions or add funds.
   🔴 BLOCK: CSP capital deployed 32.8% > 25% limit. Close or let expire before opening new CSPs.
-

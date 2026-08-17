@@ -450,15 +450,76 @@ class OIEDB:
         return {r['ticker'] for r in rows}
 
     def get_daily_new_count(self) -> int:
-        """New positions opened by the engine today (excludes SEED)."""
-        today = datetime.now().isoformat()[:10]
+        """New positions opened by the engine today (excludes SEED).
+
+        "Today" is the US/Eastern trading day (src/data/market_time.py), so
+        the daily budget resets at midnight ET — not at local-machine
+        midnight (which mid-way through the US session elsewhere). Rows are
+        stored with local timestamps, so each ts is converted to ET before
+        the date comparison.
+        """
+        from datetime import datetime as _dt
+        from src.data.market_time import ET
+        today = _dt.now(ET).strftime('%Y-%m-%d')
+        local_tz = _dt.now().astimezone().tzinfo
         seeded_at = self.get_state('seeded_at', '')
+        rows = self._conn.execute(
+            "SELECT ts FROM paper_trades WHERE event LIKE 'OPEN_%' AND ts > ?",
+            (seeded_at,)
+        ).fetchall()
+        count = 0
+        for r in rows:
+            try:
+                ts = _dt.fromisoformat(r['ts'])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=local_tz)
+                if ts.astimezone(ET).strftime('%Y-%m-%d') == today:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    def get_monthly_profit_closes(self, ticker: str) -> int:
+        """Profit-taking closes (CLOSE_50PCT / CLOSE_TREND) for a ticker in
+        the current US/Eastern calendar month — backs the per-ticker churn
+        cap (guardrail_limits.max_closes_per_ticker_per_month)."""
+        from datetime import datetime as _dt
+        from src.data.market_time import ET
+        month = _dt.now(ET).strftime('%Y-%m')
+        local_tz = _dt.now().astimezone().tzinfo
+        rows = self._conn.execute(
+            "SELECT exit_date FROM paper_positions "
+            "WHERE ticker=? AND status='CLOSED' "
+            "AND exit_reason IN ('CLOSE_50PCT','CLOSE_TREND')",
+            (ticker,)
+        ).fetchall()
+        count = 0
+        for r in rows:
+            try:
+                ts = _dt.fromisoformat(r['exit_date'])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=local_tz)
+                if ts.astimezone(ET).strftime('%Y-%m') == month:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    def get_last_exit_within_days(self, ticker: str, pos_type: str,
+                                  strike: float, days: int) -> bool:
+        """Whether this exact contract (ticker + type + strike) was closed,
+        expired, or assigned within the last N days — backs the same-strike
+        reopen cooldown (guardrail_limits.same_strike_reopen_cooldown_days)."""
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(days=days)).isoformat()
         row = self._conn.execute(
-            "SELECT COUNT(*) as cnt FROM paper_trades "
-            "WHERE ts LIKE ? AND event LIKE 'OPEN_%' AND ts > ?",
-            (f'{today}%', seeded_at)
+            "SELECT COUNT(*) as cnt FROM paper_positions "
+            "WHERE ticker=? AND pos_type=? AND ABS(COALESCE(strike,0)-?) < 0.01 "
+            "AND status IN ('CLOSED','EXPIRED','ASSIGNED') "
+            "AND substr(exit_date, 1, 10) >= ?",
+            (ticker, pos_type, strike, cutoff)
         ).fetchone()
-        return row['cnt'] if row else 0
+        return bool(row['cnt']) if row else False
 
     # ═══════════════════════════════════════════════════════════
     # SNAPSHOTS

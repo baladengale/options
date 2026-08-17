@@ -72,22 +72,17 @@ def is_market_open() -> tuple[bool, str]:
     """
     Check if US stock market is currently open.
     Returns (is_open, reason_string).
-    Converts local system time → UTC → US Eastern (works regardless of local timezone).
+    DST-aware: converts to US Eastern via zoneinfo (America/New_York) —
+    no month-approximation. Holidays/half-days are NOT handled (known gap,
+    specs/oie-paper-engine-spec.md §7).
     """
-    from datetime import timezone, timedelta
+    from src.data.market_time import eastern_now
 
-    now_utc = datetime.now(timezone.utc)
+    eastern_now = eastern_now()
 
-    # Weekend check (UTC day matches local day for weekend purposes)
-    if now_utc.weekday() >= 5:
-        return False, f"Market closed — {now_utc.strftime('%A')}"
-
-    # Approximate Eastern time: detect EDT vs EST by month
-    # EDT (UTC-4): Mar-Nov | EST (UTC-5): Nov-Mar
-    month = now_utc.month
-    is_dst = 3 < month < 11  # rough EDT estimate
-    eastern_offset = 4 if is_dst else 5
-    eastern_now = now_utc - timedelta(hours=eastern_offset)
+    # Weekend check
+    if eastern_now.weekday() >= 5:
+        return False, f"Market closed — {eastern_now.strftime('%A')}"
 
     eastern_hour = eastern_now.hour
     eastern_minute = eastern_now.minute
@@ -256,13 +251,23 @@ class OIEEngine:
         stocks_with_cost = self._fetch_cost_basis(stocks_dict)
         added, updated, unchanged = self.db.reconcile_stocks(stocks_with_cost)
 
-        # Reset cash/fund to the real liquid pool (options premiums stay in
-        # the running cash balance — only the seed cash is rebaselined).
-        old_cash = float(self.db.get_state('cash', '0'))
-        self.db.set_state('cash', str(round(net_liquid, 2)))
-        self.db.set_state('seeded_cash', str(round(net_liquid, 2)))
-        self.db.set_state('seeded_fund', str(round(0.0, 2)))
+        # Rebase cash to the REAL liquid pool via an AUDIT-TRAIL row (not a raw
+        # set_state) so derived cash (seeded_cash + Σ cash_change) always equals
+        # stored cash. Option premiums already banked stay in the running balance
+        # — the adjustment row carries only the rebaselining delta.
+        derived_cash = float(self.db.get_state('seeded_cash', '0')) + (
+            self.db._conn.execute(
+                "SELECT COALESCE(SUM(cash_change), 0) as t FROM paper_trades"
+            ).fetchone()['t'] or 0)
+        adjustment = round(net_liquid - derived_cash, 2)
+        self.db._log_trade(datetime.now().isoformat(), 'RECONCILE', None, None,
+                           f'Cash rebaselined to REAL liquid pool '
+                           f'${derived_cash:,.2f} → ${net_liquid:,.2f}',
+                           cash_change=adjustment)
+        old_cash = derived_cash
+        # Fund pool folds into cash (net_liquid = cash + fund combined)
         self.db.set_state('fund', str(round(0.0, 2)))
+        self.db._conn.commit()
 
         print(f"\n✅ Paper book reconciled to REAL account:")
         print(f"   Stocks:   {added} added, {updated} updated, {unchanged} unchanged")
@@ -395,9 +400,10 @@ class OIEEngine:
             except Exception:
                 self._real_portfolio = {}
             active_options = self.db.get_active_options()
-            stock_prices = {}
 
-            # Fetch live stock prices for real portfolio + option underlyings
+            # Fetch live stock prices for real portfolio + option underlyings.
+            # NOTE: `stock_prices` (used by the expiry ITM/OTM resolution below)
+            # aliases self._stock_prices — both must see the same live marks.
             real_tickers = list(self._real_portfolio.keys())
             opt_tickers = list(set(o['ticker'] for o in active_options))
             all_stock_tickers = list(set(real_tickers + opt_tickers))
@@ -411,6 +417,7 @@ class OIEEngine:
                         self._stock_prices[short] = s.last_price
                 except Exception:
                     pass
+            stock_prices = self._stock_prices
 
             # Update option prices
             option_codes = [p['id'] for p in active_options]  # we need codes not IDs
@@ -527,63 +534,75 @@ class OIEEngine:
                             close_reason = 'EXPIRE'
 
                 if close_reason:
+                    # NOTE: cash is maintained ONLY by the DB audit trail
+                    # (oie_db._log_trade applies every cash_impact to state).
+                    # The engine never mutates cash locally — state and the
+                    # derived value (seeded_cash + Σ cash_change) always agree.
                     if close_reason in ('EXPIRE',):
                         pnl = self.db.expire_position(pos_id)
-                        cash += entry * qty * 100
                         log.info(f"EXPIRE {ticker} {pos_type} ${strike:.0f}: +${pnl:,.2f}")
                         events.append(f'📅 {ticker} {pos_type} ${strike:.0f} EXPIRED: +${pnl:,.2f}')
                         closed_trades += 1
                     elif close_reason in ('CC_ASSIGN',):
                         self.db.assign_position(pos_id, 'CC', stock_prices.get(ticker, strike))
-                        cash += strike * qty * 100
                         events.append(f'📈 {ticker} CC ${strike:.0f} ASSIGNED: shares called away')
                         closed_trades += 1
                     elif close_reason in ('CSP_ASSIGN',):
                         self.db.assign_position(pos_id, 'CSP', stock_prices.get(ticker, strike))
-                        cash -= strike * qty * 100
                         events.append(f'📉 {ticker} CSP ${strike:.0f} ASSIGNED: {qty*100} shares added')
                         closed_trades += 1
                     elif close_reason in ('STOP_DELTA', 'STOP_LOSS'):
-                        # Stop-loss close
+                        # Stop-loss close (pay to close → negative cash_impact)
                         pnl = self.db.close_position(pos_id, current_bid, close_reason,
-                                                     cash_impact=current_bid * qty * 100)
-                        cash -= current_bid * qty * 100  # pay to close
-                        loss_str = f'{loss_multiple:.1f}x premium' if profit_captured < 0 else ''
+                                                     cash_impact=-current_bid * qty * 100)
+                        entry_total = entry * qty * 100
+                        loss_str = (f'{abs(pnl_dollars) / entry_total:.1f}x premium'
+                                    if entry_total > 0 else '')
                         log.info(f"STOP {ticker} {pos_type} ${strike:.0f} {close_reason}: "
                                 f"Δ={delta:.2f} loss={loss_str} P&L=${pnl:,.2f}")
                         events.append(f'🛑 {ticker} {pos_type} ${strike:.0f} {close_reason}: '
                                     f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f}')
                         closed_trades += 1
                     else:
-                        # Profit target close
-                        pnl = self.db.close_position(pos_id, current_bid, close_reason,
-                                                     cash_impact=current_bid * qty * 100)
-                        cash -= current_bid * qty * 100  # pay to close
-                        log.info(f"CLOSE {ticker} {pos_type} ${strike:.0f} {close_reason}: {profit_captured:.0f}%, P&L=${pnl:,.2f}")
-                        events.append(f'💰 {ticker} {pos_type} ${strike:.0f} {close_reason}: '
-                                    f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f}')
-                        closed_trades += 1
+                        # Profit target close — per-ticker churn cap
+                        # (guardrail_limits.max_closes_per_ticker_per_month):
+                        # discretionary profit-taking is capped; hard exits
+                        # (stops/assignments/expiry) are never blocked.
+                        churn_cap = int(self.cfg.guardrail_limits(
+                            'max_closes_per_ticker_per_month', 2))
+                        if close_reason in ('CLOSE_50PCT', 'CLOSE_TREND') and \
+                                self.db.get_monthly_profit_closes(ticker) >= churn_cap:
+                            events.append(f'⏸️ {ticker} {pos_type} ${strike:.0f} {close_reason} '
+                                        f'HELD: monthly profit-close cap ({churn_cap}/month) reached')
+                            log.info(f"CHURN_HOLD {ticker}: profit-close cap {churn_cap}/month reached")
+                        else:
+                            pnl = self.db.close_position(pos_id, current_bid, close_reason,
+                                                         cash_impact=-current_bid * qty * 100)
+                            log.info(f"CLOSE {ticker} {pos_type} ${strike:.0f} {close_reason}: {profit_captured:.0f}%, P&L=${pnl:,.2f}")
+                            events.append(f'💰 {ticker} {pos_type} ${strike:.0f} {close_reason}: '
+                                        f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f}')
+                            closed_trades += 1
 
                 # ── Roll winner (trend-modulated): bank profit, redeploy for credit ──
                 # Paper semantics: close the winner now (booking the profit), and let
                 # PHASE 4 screening open a fresh contract on the same ticker/strategy
                 # (net-credit-only + ≤2 rolls gate via the rolling config). This mirrors
                 # how a practitioner rolls — close the tested leg, sell a new one.
+                # Cash: entry credit was booked at open (open_position), the buyback is
+                # booked here — both via the audit trail.
                 if roll_decision and not close_reason:
                     pnl = self.db.close_position(pos_id, current_bid, roll_decision,
-                                                 cash_impact=current_bid * qty * 100)
-                    cash -= current_bid * qty * 100  # pay to close the old leg
-                    cash += entry * qty * 100         # entry credit was booked at open; rebate accounting
+                                                 cash_impact=-current_bid * qty * 100)
                     direction = 'down-and-out' if roll_decision == 'ROLL_DOWN_OUT' else 'up-and-out'
                     log.info(f"ROLL {ticker} {pos_type} ${strike:.0f} {roll_decision}: "
                              f"{profit_captured:.0f}% captured, P&L=${pnl:,.2f}, {direction}")
                     events.append(f'🔄 {ticker} {pos_type} ${strike:.0f} ROLL ({direction}): '
-                                f'{profit_captured:.0f}% captured, P&L ${pnl:,.2f} — '
+                                f'{profit_captured:.0f}% captured, P&L=${pnl:,.2f} — '
                                 f'redeploying for credit in screen phase')
                     closed_trades += 1
 
             # ── 4. Screen new opportunities ──
-            self.db.set_state('cash', str(round(cash, 2)))
+            # Cash state is maintained by the DB audit trail — re-read it.
             self.db._conn.commit()
             candidates = self._screen_candidates(stock_prices)
 
@@ -621,13 +640,20 @@ class OIEEngine:
                         'CC' if p['pos_type'] == 'CALL' else 'STOCK'),
                 })
 
-            gc = GuardrailChecker(net_liq=net_liq, cash=cash, buying_power=cash * 2,
+            # Buying power = liquid only (cash + fund). Margin BP NEVER counts
+            # toward CSP coverage (GOAL #4 — 100% cash-secured). The regime is
+            # threaded so the CSP-deployment block tightens in VOLATILE/BEARISH.
+            regime_label = getattr(self, '_regime', 'NEUTRAL')
+            gc = GuardrailChecker(net_liq=net_liq, cash=cash,
+                                   buying_power=cash + fund,
                                    open_positions=gc_positions,
-                                   daily_order_count=daily_new)
+                                   daily_order_count=daily_new,
+                                   regime=regime_label)
 
             # ── 6. Execute ──
             executed = 0
-            max_new = max(0, min(2, self.cfg.max_daily_new_positions - daily_new))
+            max_new = max(0, min(self.cfg.max_new_positions_per_cycle,
+                                 self.cfg.max_daily_new_positions - daily_new))
             gr = gc.check()
             if gr.blocks:
                 log.warning(f"Portfolio BLOCKS: {gr.blocks}")
@@ -655,9 +681,32 @@ class OIEEngine:
                         events.append(f'🛡️ {msg}')
                         continue
 
-                    # Cash buffer check for CSP
-                    if c.strategy == 'CSP' and c.capital_required > cash * 0.8:
-                        msg = f'{c.ticker} CSP BLOCKED: capital ${c.capital_required:,.0f} > 80% of cash ${cash:,.0f}'
+                    # CSP pause — the 5 GOAL.md §5 triggers (config-driven)
+                    if c.strategy == 'CSP':
+                        paused, reasons = self._csp_pause_reasons(c.ticker)
+                        if paused:
+                            msg = f'{c.ticker} CSP BLOCKED: pause trigger — {"; ".join(reasons)}'
+                            log.warning(msg)
+                            events.append(f'🛡️ {msg}')
+                            continue
+
+                    # Same-strike reopen cooldown (guardrail_limits)
+                    cooldown_days = int(self.cfg.guardrail_limits(
+                        'same_strike_reopen_cooldown_days', 14))
+                    if cooldown_days > 0 and self.db.get_last_exit_within_days(
+                            c.ticker, 'PUT' if c.strategy == 'CSP' else 'CALL',
+                            c.strike, cooldown_days):
+                        msg = f'{c.ticker} {c.strategy} ${c.strike:.0f} BLOCKED: ' \
+                              f'same-strike cooldown ({cooldown_days}d)'
+                        log.info(msg)
+                        events.append(f'🛡️ {msg}')
+                        continue
+
+                    # Cash buffer check for CSP — liquid cash only, fraction from
+                    # config (position_limits.csp_single_cash_fraction).
+                    if c.strategy == 'CSP' and c.capital_required > cash * self.cfg.csp_single_cash_fraction:
+                        msg = (f'{c.ticker} CSP BLOCKED: capital ${c.capital_required:,.0f} > '
+                               f'{self.cfg.csp_single_cash_fraction:.0%} of cash ${cash:,.0f}')
                         log.warning(msg)
                         events.append(f'🛡️ {msg}')
                         continue
@@ -687,7 +736,8 @@ class OIEEngine:
                             if c.ticker not in w.lower():
                                 events.append(f'⚠️ {c.ticker} {c.strategy} WARN: {w[:80]}')
 
-                # Execute (or simulate in dry-run)
+                # Execute (or simulate in dry-run). Cash updates flow through
+                # open_position's cash_impact → the DB audit trail only.
                 prefix = '🔍 [DRY RUN] Would open' if self.dry_run else '📝'
                 if c.strategy == 'CC':
                     if not self.dry_run:
@@ -700,7 +750,6 @@ class OIEEngine:
                             cash_impact=c.bid * 100,
                             note=f'CC ${c.strike:.0f}x{c.expiry} Δ{c.delta:.2f} '
                                  f'RoC{c.annualized_roc_pct:.1f}% Score{c.score}')
-                        cash += c.bid * 100
                     log.info(f"OPEN_CC {c.ticker} ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={c.delta:.2f} prem=${c.bid:.2f} RoC={c.annualized_roc_pct:.1f}%")
                     events.append(f'{prefix} {c.ticker} CC ${c.strike:.0f} {c.expiry} '
                                 f'DTE={c.dte} Δ={c.delta:.2f} '
@@ -719,7 +768,6 @@ class OIEEngine:
                             cash_impact=c.bid * 100,
                             note=f'CSP ${c.strike:.0f}x{c.expiry} Δ{c.delta:.2f} '
                                  f'RoC{c.annualized_roc_pct:.1f}% Score{c.score}')
-                        cash += c.bid * 100
                     log.info(f"OPEN_CSP {c.ticker} ${c.strike:.0f} {c.expiry} DTE={c.dte} Δ={c.delta:.2f} prem=${c.bid:.2f} RoC={c.annualized_roc_pct:.1f}%")
                     events.append(f'{prefix} {c.ticker} CSP ${c.strike:.0f} {c.expiry} '
                                 f'DTE={c.dte} Δ={c.delta:.2f} '
@@ -728,8 +776,9 @@ class OIEEngine:
                     executed += 1
 
             # ── 7. Snapshot ──
-            self.db.set_state('cash', str(round(cash, 2)))
+            # Cash re-read from the audit-maintained state (single writer).
             self.db._conn.commit()
+            cash = float(self.db.get_state('cash', '0'))
 
             active_all = self.db.get_active_positions()
             option_premium = sum(
@@ -846,7 +895,8 @@ class OIEEngine:
         freed capital has no CSP slot to redeploy into, which enables the
         deployment-aware SCARCE bypass in decide_profit_target. CSP liability
         = Σ(strike × |qty| × 100) over active PUT positions; NLV mirrors
-        _capital_scarcity's approximation.
+        _capital_scarcity's approximation. The limit tightens to
+        max_csp_deployed_volatile_pct in VOLATILE/BEARISH regimes.
         """
         try:
             positions = self.db.get_active_options()
@@ -861,9 +911,91 @@ class OIEEngine:
                              for p in positions)
             if nlv <= 0:
                 return False
-            return (csp_liability / nlv) > get_config().max_csp_deployed_pct
+            limit = get_config().max_csp_deployed_pct
+            if getattr(self, '_regime', '') in ('VOLATILE', 'BEARISH'):
+                limit = get_config().max_csp_deployed_volatile_pct
+            return (csp_liability / nlv) > limit
         except Exception:
             return False
+
+    def _csp_pause_reasons(self, ticker: Optional[str] = None) -> tuple[bool, list[str]]:
+        """ALL five GOAL.md §5 CSP pause triggers, config-driven
+        (Config.should_pause_csp + per-ticker basis drop).
+
+        1. VIX > csp_pause.vix_above            (macro, when yf available)
+        2. SPY < csp_pause.spy_below_sma-day SMA (moomoo history)
+        3. Regime score ≤ csp_pause.regime_min_score
+        4. Cash reserve < csp_pause.cash_reserve_below_pct
+        5. Ticker drop > csp_pause.stock_drop_from_basis_pct from paper basis
+           (per-ticker — only when ticker is given)
+
+        Data-blind triggers (no macro/SPY data) do not fire — the engine never
+        blocks on unknowns it cannot measure.
+        """
+        reasons: list[str] = []
+        try:
+            macro = getattr(self, '_macro', None)
+            vix = getattr(macro, 'vix', None) if macro else None
+            regime_score = int(getattr(macro, 'regime_score', 0)) if macro else None
+
+            # Cash reserve vs NLV (cash + real stock market value)
+            cash = float(self.db.get_state('cash') or 0)
+            fund = float(self.db.get_state('fund') or 0)
+            stock_mv = sum(
+                qty * (self._stock_prices.get(t, 0) or 0)
+                for t, qty in getattr(self, '_real_portfolio', {}).items())
+            nlv = cash + fund + stock_mv
+            cash_reserve_pct = (cash + fund) / nlv if nlv > 0 else 1.0
+
+            # SPY vs its N-day SMA (moomoo, best-effort)
+            spy_price = spy_sma = None
+            try:
+                if self.moomoo:
+                    spy_snap = self.moomoo.get_stock_snapshot('US.SPY')
+                    if spy_snap and spy_snap.last_price > 0:
+                        spy_price = spy_snap.last_price
+                        window = self.cfg.csp_pause_spy_sma
+                        hist = self.moomoo.get_price_history('US.SPY', window)
+                        if hist and len(hist) >= window // 2:
+                            spy_sma = sum(hist[-window:]) / len(hist[-window:])
+            except Exception:
+                pass
+
+            paused, r = self.cfg.should_pause_csp(
+                vix=vix if vix is not None else -1.0,   # -1 → trigger can't fire
+                regime_score=regime_score if regime_score is not None else +1,
+                cash_reserve_pct=cash_reserve_pct,
+                spy_price=spy_price, spy_sma=spy_sma)
+            reasons.extend(r)
+
+            # Per-ticker trigger: drop from paper cost basis
+            if ticker:
+                drop_pct = self.cfg.csp_pause_stock_drop_pct
+                basis = self._paper_stock_basis(ticker)
+                price = getattr(self, '_stock_prices', {}).get(ticker, 0)
+                if basis > 0 and price > 0 and price < basis * (1 - drop_pct):
+                    reasons.append(
+                        f'{ticker} {-(1 - price / basis):.0%} > {drop_pct:.0%} below basis')
+
+            if reasons:
+                log.info(f"CSP_PAUSE|ticker={ticker or 'GLOBAL'}|reasons={'; '.join(reasons)}")
+        except Exception:
+            return False, []
+        return bool(reasons), reasons
+
+    def _paper_stock_basis(self, ticker: str) -> float:
+        """Quantity-weighted cost basis of ACTIVE paper STOCK rows (0 if unknown)."""
+        try:
+            rows = self.db.get_active_stocks()
+            qty = basis = 0.0
+            for r in rows:
+                if r['ticker'] == ticker:
+                    q = r['qty'] or 0
+                    qty += q
+                    basis += q * (r['cost_price'] or 0)
+            return basis / qty if qty > 0 else 0.0
+        except Exception:
+            return 0.0
 
     def _emergency_stage(self) -> bool:
         """Whether the paper account is in EMERGENCY recovery stage.
@@ -915,16 +1047,20 @@ class OIEEngine:
                 cc_committed[t] = cc_committed.get(t, 0) + abs(o.get('qty', 0)) * 100
 
 
-        # Macro
+        # Macro — stored on self for the CSP-pause triggers (_csp_pause_reasons)
+        # and the regime-aware CSP-deployment limit (GuardrailChecker regime=).
         regime = 'NEUTRAL'
         regime_mult = 1.0
+        self._macro = None
         if self.yf:
             try:
                 macro = get_macro_context(self.yf)
+                self._macro = macro
                 regime = macro.market_regime
                 regime_mult = macro.position_mult
             except Exception:
                 pass
+        self._regime = regime
 
         log.info(f"OIE_SCAN|tickers={len(watchlist)}|regime={regime}|"
                  f"cash=${cash:,.0f}|force={self.force}|dry={self.dry_run}")
@@ -955,10 +1091,17 @@ class OIEEngine:
             snap = snap_map.get(ticker)
             if snap is None or snap.last_price <= 0:
                 continue
-            # Skip illiquid tickers (wide spread = poor option liquidity)
-            if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > 5.0:
+            # Skip illiquid tickers (wide spread = poor option liquidity) —
+            # threshold from config (options.liquidity.bid_ask_spread_max_pct)
+            if snap.bid_ask_spread_pct and snap.bid_ask_spread_pct > self.cfg.spread_max_pct:
                 continue
             viable.append((ticker, short, snap))
+
+        # Global CSP pause (GOAL.md §5, all 5 triggers) — skip the CSP branch
+        # for the whole scan when paused. CCs (share-secured) are unaffected.
+        csp_paused, pause_reasons = self._csp_pause_reasons()
+        if csp_paused:
+            log.info(f"CSP PAUSED this cycle: {'; '.join(pause_reasons)}")
 
         # ── OPTIMIZATION 3: Single DTE range per ticker ──
         for ticker, short, snap in viable:
@@ -971,12 +1114,27 @@ class OIEEngine:
             if history:
                 enrich_stock_snapshot(snap, history, spy_history)
 
-            # Ticker score
+            # Earnings blackout — best-effort via yfinance; hard gate when KNOWN
+            # (options.earnings.blackout_days). Unknown data does not block.
+            earnings_blackout = False
+            days_to_earnings = None
+            if self.yf:
+                try:
+                    from src.analysis.sentiment import get_ticker_sentiment
+                    ts = get_ticker_sentiment(self.yf, ticker)
+                    earnings_blackout = bool(ts.in_earnings_blackout)
+                    days_to_earnings = ts.days_to_earnings
+                except Exception:
+                    pass
+
+            # Ticker score (earnings blackout feeds the +2.0 penalty; IV rank
+            # neutral when unknown — the per-contract IVR gate lives in
+            # passes_all_gates and only fires on known data)
             ticker_score = _compute_ticker_score(
                 snap=snap,
                 trend_composite=_trend_composite(snap),
                 analyst_consensus='N/A',
-                earnings_blackout=False,
+                earnings_blackout=earnings_blackout,
                 insider_sentiment='NEUTRAL',
                 target_upside=None,
                 news_score=50,
@@ -986,22 +1144,39 @@ class OIEEngine:
             )
 
             contracts = self.moomoo.get_option_snapshots_resilient(
-                ticker, dte_min=7, dte_max=90)
+                ticker, dte_min=self.cfg.dte_screen_min,
+                dte_max=self.cfg.dte_screen_max)
             if not contracts:
                 continue
+
+            # CC cost-basis gates (GOAL.md §6, cc_management config):
+            #  - never sell below cost basis (locks in a loss)
+            #  - pause CCs when the stock is deep below basis
+            basis = self._paper_stock_basis(short)
+            price = snap.last_price or 0
+            cc_below_basis_block = (self.cfg.cc_never_sell_below_basis
+                                    and basis > 0)
+            cc_pause_drop = (basis > 0 and price > 0
+                             and price < basis * (1 - self.cfg.cc_pause_drop_pct))
+            if has_shares and cc_pause_drop:
+                log.info(f"CC PAUSED {short}: price ${price:.2f} > "
+                         f"{self.cfg.cc_pause_drop_pct:.0%} below basis ${basis:.2f}")
 
             for c in contracts:
                 # Basic filters (matching screener logic)
                 abs_d = abs(c.delta or 0)
 
                 # CSP
-                if c.option_type == 'PUT' and not has_shares:
+                if c.option_type == 'PUT' and not has_shares and not csp_paused:
+                    # Earnings blackout hard gate (known data only)
+                    if earnings_blackout:
+                        continue
                     ok, reason = passes_all_gates(
                         c, 'CSP', regime, snap, cfg=self.cfg,
                         skip_concentration=self.force,
                         skip_cash_buffer=self.force,
                         net_liq=net_liq, cash=cash,
-                        buying_power=cash * 2)
+                        buying_power=cash + fund)
                     if not ok:
                         continue
                     roc = _csp_roc(c.bid, c.strike, c.dte)
@@ -1023,12 +1198,20 @@ class OIEEngine:
 
                 # CC
                 if c.option_type == 'CALL' and has_shares:
+                    # Never sell below cost basis (GOAL.md §6) — a CC strike
+                    # under basis locks in a loss on assignment.
+                    if cc_below_basis_block and c.strike < basis:
+                        continue
+                    # Earnings blackout hard gate (GOAL.md §8 pre-trade
+                    # checklist applies to ANY new trade; known data only)
+                    if earnings_blackout:
+                        continue
                     ok, reason = passes_all_gates(
                         c, 'CC', regime, snap, cfg=self.cfg,
                         skip_concentration=True,
                         skip_cash_buffer=True,
                         net_liq=net_liq, cash=cash,
-                        buying_power=cash * 2)
+                        buying_power=cash + fund)
                     if not ok:
                         continue
                     roc = cc_roc(c.bid, snap.last_price, c.dte)
@@ -1593,11 +1776,7 @@ def main():
                 cash_impact=premium_total,
                 note=f'SIM: {args.strategy} ${args.strike:.0f} {args.expiry} '
                      f'prem=${args.premium:.2f}×{args.contracts}')
-            # Update cash — premium received for selling option
-            cash = float(engine.db.get_state('cash', '0'))
-            cash += premium_total
-            engine.db.set_state('cash', str(round(cash, 2)))
-            engine.db._conn.commit()
+            # Cash already applied by the audit trail (open_position → _log_trade)
             print(f"✅ Opened {args.strategy} {args.ticker} ${args.strike:.0f} {args.expiry}")
             print(f"   Position ID: {pos_id} | Premium: ${premium_total:,.2f} | DTE: {dte}")
             engine.show_status()
@@ -1610,11 +1789,7 @@ def main():
             buyback_cost = args.price * abs(pos['qty']) * 100
             pnl = engine.db.close_position(args.pos_id, args.price, 'SIM_CLOSE',
                                            cash_impact=-buyback_cost)
-            # Update cash — paying to buy back the option
-            cash = float(engine.db.get_state('cash', '0'))
-            cash -= buyback_cost
-            engine.db.set_state('cash', str(round(cash, 2)))
-            engine.db._conn.commit()
+            # Cash already applied by the audit trail (close_position → _log_trade)
             print(f"✅ Closed position {args.pos_id} @ ${args.price:.2f}")
             print(f"   P&L: ${pnl:,.2f} | Reason: SIM_CLOSE")
             engine.show_status()

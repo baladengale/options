@@ -51,6 +51,7 @@ regime:
 options:
   # Delta ranges per strategy and regime
   delta:
+    deep_itm_max: 0.70              # CSP |Δ| above this = deep ITM, not premium selling (any regime)
     csp:
       BULLISH:     [0.20, 0.30]
       NEUTRAL:     [0.20, 0.30]
@@ -82,6 +83,12 @@ options:
 
   # IV Rank
   iv_rank_min: 30
+  iv_rank_required: false           # true = reject contracts with UNKNOWN IV rank;
+                                   # false = gate only applies when IV rank is known
+
+  # Volatility Risk Premium: only sell premium when IV > HV(30d) × this factor
+  vrp:
+    hv_factor_min: 0.8
 
   # Liquidity filters
   liquidity:
@@ -152,6 +159,11 @@ position_limits:
   max_csp_deployed_volatile_pct: 0.10  # 10% in volatile regime
   max_open_positions: 10             # max active CC/CSP options only (wheel strategy bandwidth)
   max_daily_new_positions: 10        # new trades per day
+  max_new_positions_per_cycle: 2     # engine hard cap per cycle (below the daily cap —
+                                     # pacing so one cycle never sweeps the daily budget)
+  csp_single_cash_fraction: 0.80     # a single NEW CSP may consume at most this fraction
+                                     # of liquid cash (cash + fund). Buying power is passed
+                                     # as cash+fund only — margin BP never counts (GOAL #4).
   max_margin_pct: 0.30              # 30% margin utilization max
   csp_capital_coverage: 1.0         # must cover 100% of CSP notional with cash+BP
   bp_margin_buffer: 0.50            # 50% of buying power available as margin buffer

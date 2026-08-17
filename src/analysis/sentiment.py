@@ -140,11 +140,15 @@ def score_earnings_blackout(days_to_earnings: Optional[int]) -> tuple[bool, floa
     """
     Check earnings blackout. Returns (in_blackout, penalty).
     Penalty: 0 = no penalty, 0.5 = approaching, 1.0 = in blackout.
+    Blackout window from config (options.earnings.blackout_days); the
+    approaching window extends 7 days past it.
     """
+    from src.config import get_config
+    blackout_days = int(get_config().earnings_blackout_days)
     if days_to_earnings is None:
         return False, 0.0
-    if 0 <= days_to_earnings <= 14:
+    if 0 <= days_to_earnings <= blackout_days:
         return True, 1.0
-    if 15 <= days_to_earnings <= 21:
+    if blackout_days + 1 <= days_to_earnings <= blackout_days + 7:
         return False, 0.3
     return False, 0.0

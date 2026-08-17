@@ -97,6 +97,11 @@ class Config:
         return self._data['options']['delta'][strategy].get(regime, [0.20, 0.30])
 
     @property
+    def delta_deep_itm_max(self) -> float:
+        """CSP |Δ| above this = deep ITM, not premium selling (any regime)."""
+        return self._data['options']['delta'].get('deep_itm_max', 0.70)
+
+    @property
     def dte_screen_min(self) -> int:
         return self._data['options']['dte']['screen_min']
 
@@ -139,6 +144,17 @@ class Config:
     @property
     def iv_rank_min(self) -> float:
         return self._data['options']['iv_rank_min']
+
+    @property
+    def iv_rank_required(self) -> bool:
+        """True = reject contracts with UNKNOWN IV rank (strict); False = gate
+        only applies when IV rank data is present."""
+        return bool(self._data['options'].get('iv_rank_required', False))
+
+    @property
+    def vrp_hv_factor_min(self) -> float:
+        """IV must exceed HV(30d) × this factor to sell premium (VRP gate)."""
+        return self._data.get('options', {}).get('vrp', {}).get('hv_factor_min', 0.8)
 
     @property
     def oi_min(self) -> int:
@@ -196,6 +212,19 @@ class Config:
         return self._data['position_limits']['max_daily_new_positions']
 
     @property
+    def max_new_positions_per_cycle(self) -> int:
+        """Engine hard cap on new positions opened in ONE cycle (paces the
+        daily budget so a single cycle never sweeps it)."""
+        return self._data['position_limits'].get('max_new_positions_per_cycle', 2)
+
+    @property
+    def csp_single_cash_fraction(self) -> float:
+        """Max fraction of liquid cash (the buying-power value the caller
+        passes — cash + fund only, never margin BP) a single NEW CSP may
+        consume. GOAL #4: CSP notional must be 100% cash-secured."""
+        return self._data['position_limits'].get('csp_single_cash_fraction', 0.80)
+
+    @property
     def max_margin_pct(self) -> float:
         return self._data['position_limits']['max_margin_pct']
 
@@ -220,7 +249,7 @@ class Config:
 
     @property
     def cash_buffer_warn(self) -> float:
-        return self._data['position_limits'].get('cash_buffer_warn', 0.25)
+        return self._data['position_limits'].get('cash_buffer_warn', 0.15)
 
     @property
     def cash_buffer_critical(self) -> float:
@@ -272,7 +301,7 @@ class Config:
 
     @property
     def stop_delta_csp_decision(self) -> float:
-        return self._data['stop_loss']['delta'].get('csp_decision', 0.40)
+        return self._data['stop_loss']['delta'].get('csp_decision', 0.50)
 
     @property
     def stop_delta_cc_critical(self) -> float:
@@ -280,7 +309,7 @@ class Config:
 
     @property
     def stop_delta_cc_warn(self) -> float:
-        return self._data['stop_loss']['delta'].get('cc_warn', 0.40)
+        return self._data['stop_loss']['delta'].get('cc_warn', 0.50)
 
     @property
     def stop_delta_cc_close(self) -> float:
@@ -415,6 +444,11 @@ class Config:
         return self._data['cc_management']['close_at_profit_pct']
 
     @property
+    def cc_never_sell_below_basis(self) -> bool:
+        """GOAL.md §6: never sell a CC below cost basis — locks in a loss."""
+        return bool(self._data['cc_management'].get('never_sell_below_cost_basis', True))
+
+    @property
     def cc_roll_dte(self) -> int:
         return self._data['cc_management']['roll_dte_threshold']
 
@@ -504,12 +538,28 @@ class Config:
     # CONVENIENCE
     # ═══════════════════════════════════════════════════════════
 
-    def should_pause_csp(self, vix: float, regime_score: int,
-                         cash_reserve_pct: float) -> tuple[bool, list[str]]:
-        """Check CSP pause triggers. Returns (should_pause, reasons)."""
+    def should_pause_csp(self, vix: Optional[float], regime_score: int,
+                         cash_reserve_pct: float,
+                         spy_price: Optional[float] = None,
+                         spy_sma: Optional[float] = None) -> tuple[bool, list[str]]:
+        """Check ALL five CSP pause triggers (GOAL.md §5).
+
+        Global triggers:
+          1. VIX > csp_pause.vix_above
+          2. SPY below its csp_pause.spy_below_sma-day SMA (needs spy_price + spy_sma)
+          3. Regime score ≤ csp_pause.regime_min_score (VOLATILE or worse)
+          4. Cash reserve < csp_pause.cash_reserve_below_pct
+        Per-ticker trigger (checked separately by callers that know the basis):
+          5. Single stock drop > csp_pause.stock_drop_from_basis_pct
+
+        Returns (should_pause, reasons).
+        """
         reasons = []
-        if vix > self.csp_pause_vix:
+        if vix is not None and vix > self.csp_pause_vix:
             reasons.append(f'VIX {vix:.1f} > {self.csp_pause_vix}')
+        if spy_price is not None and spy_sma is not None and spy_sma > 0 \
+                and spy_price < spy_sma:
+            reasons.append(f'SPY {spy_price:.0f} < {self.csp_pause_spy_sma}-day SMA {spy_sma:.0f}')
         if regime_score <= self.csp_pause_regime_score:
             reasons.append(f'Regime score {regime_score} ≤ {self.csp_pause_regime_score}')
         if cash_reserve_pct < self.csp_pause_cash_reserve_pct:

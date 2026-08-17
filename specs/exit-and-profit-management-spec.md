@@ -57,7 +57,7 @@ This is why the framework computes a rich signal stack (trend, sentiment, IV) fo
 
 ### 3.2 CSP — trend extension allowed
 
-After gates pass, `_csp_target()` (`:169`) computes the target:
+After gates pass, `_csp_target()` (`profit_management.py:180`) computes the target:
 
 | Condition | Target | Engine action |
 |-----------|:---:|----------------|
@@ -91,7 +91,7 @@ profit_take:
 
 ## 4. The OTM-only close gate
 
-**File**: `src/scoring/holding_score.py:189–213`. The behavioral guardrail that prevents the most common costly mistake: closing a far-OTM winner at 50% when theta would have done the rest.
+**File**: `src/scoring/holding_score.py:196–213` (inline in `_score_option`, `:162`). The behavioral guardrail that prevents the most common costly mistake: closing a far-OTM winner at 50% when theta would have done the rest.
 
 ```
 GIVEN: pd = decide_profit_target(...)              # already trend-aware
@@ -115,7 +115,7 @@ IF pd.action == ACTION_CLOSE  AND  profit_captured ≥ base (50%):
 
 ## 5. Loss side — delta gates, premium stops, absolute
 
-### 5.1 Delta gates (`exit_management.py:199 _delta_gate`)
+### 5.1 Delta gates (`exit_management.py:213 _delta_gate`)
 
 | Strategy | Condition | Action |
 |----------|-----------|--------|
@@ -127,7 +127,7 @@ IF pd.action == ACTION_CLOSE  AND  profit_captured ≥ base (50%):
 
 > The CC wheel-turn fix (2026-08-08): a deep-ITM CC inside 14 DTE is held for assignment (the wheel rotating); beyond 14 DTE it's rolled up-and-out. The Δ 0.50–0.60 band stays warn-only — CC assignment is often a desired wheel outcome.
 
-### 5.2 Premium-multiple stops (`exit_management.py:244 _premium_tier_stop`)
+### 5.2 Premium-multiple stops (`exit_management.py:258 _premium_tier_stop`)
 
 **CSP only** — CC is exempt (option loss offset by share gains). `loss_multiple = |profit_captured|/100`.
 
@@ -152,7 +152,7 @@ The floor **scales with total premium collected** (`entry × qty × 100`) so a l
 
 The bottom band preserves the legacy `−$1,000` behavior for small trades; the top band lets the DTE-adjusted premium tier (5.2) be the binding constraint for ordinary losses, with the floor reserved for a genuine rout. **Config key**: `stop_loss.delta.heavy_loss_bands` (list of `{premium_max, max_loss}` rows). Legacy `heavy_loss_abs: N` (single scalar) still works — collapsed to one band at `.inf`.
 
-### 5.4 Loss-side trend overlay (`profit_management.py:256 loss_alert_should_hard_stop`)
+### 5.4 Loss-side trend overlay (`profit_management.py:267 loss_alert_should_hard_stop`)
 
 At the 2× premium alert: if `trend_composite < 40` → treat as hard stop (close/roll immediately); if `trend ≥ 40` → one extra roll attempt, then forced decision. **Trend never overrides the 3× / critical-delta hard stops** decided upstream.
 

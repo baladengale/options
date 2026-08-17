@@ -240,6 +240,18 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
         score -= 0.5
         decision = (f'👍 HOLD ({profit_captured:.0f}% < {pd.target_pct:.0f}% target'
                     + (f', trend-extended' if pd.extended_by_trend else '') + ')')
+    elif profit_captured < 0:
+        # Underwater — comparing a loss to a profit target reads as nonsense
+        # ("-58% < 85% target, trend-extended"). The trend-extended tag describes
+        # the target, not the position, and is noise on a loser. Show loss
+        # posture instead: the ×-multiple of premium lost. The stop tiers /
+        # delta gates later in this function overwrite this string when they
+        # fire, so "below stop tiers" holds by construction.
+        loss_multiple = abs(profit_captured) / 100
+        tc = pd.trend_context.trend_composite if pd.trend_context else None
+        decision = (f'HOLD (underwater {profit_captured:.0f}% — {loss_multiple:.2f}× premium, '
+                    f'below stop tiers'
+                    + (f', trend {tc:.0f}' if tc is not None else '') + ')')
     else:
         decision = (f'HOLD ({profit_captured:.0f}% < {pd.target_pct:.0f}% target'
                     + (f', trend-extended' if pd.extended_by_trend else '') + ')')

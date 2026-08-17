@@ -110,6 +110,45 @@ def test_option_heavy_loss_catchall():
     assert 'UNDERWATER' in dec or 'Position Down' in dec or 'Thesis' in dec
 
 
+def test_option_underwater_suppresses_trend_extended_label():
+    # Regression (2026-08-17 digest): AVGO CSP at -58% showed
+    # "HOLD (-58% < 85% target, trend-extended)" — a loss compared against a
+    # profit target. The tag describes the target, not the position; on an
+    # underwater row the decision must show loss posture instead.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=75, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, pd = _score_option(_pos(), _opt(dte=32, delta=-0.44), profit_captured=-58.0,
+                          pl=-700, today=TODAY, yf_client=None, trend_ctx=ctx)
+    assert pd.extended_by_trend is True      # target genuinely extended to 85%…
+    assert 'trend-extended' not in dec       # …but the label must not leak onto a loser
+    assert 'underwater' in dec
+    assert '0.58' in dec                     # ×-multiple of premium lost
+    assert '85%' not in dec                  # no loss-vs-target comparison
+
+
+def test_option_small_profit_keeps_trend_extended_label():
+    # Profitable but below the extended target (GOOG CSP at +3.6%) — here the
+    # tag is the decision-relevant fact: don't close at 50%, ride to 85%.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=75, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, pd = _score_option(_pos(), _opt(dte=32, delta=-0.29), profit_captured=3.6,
+                          pl=35, today=TODAY, yf_client=None, trend_ctx=ctx)
+    assert pd.extended_by_trend is True
+    assert 'trend-extended' in dec
+    assert '85%' in dec
+
+
+def test_option_underwater_stop_alert_still_overrides():
+    # The underwater HOLD posture must never mask a firing stop tier: a 2.5×
+    # loss at 32 DTE crosses the 2.0× far-alert → STOP ALERT wins the label.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=75, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, pd = _score_option(_pos(), _opt(dte=32, delta=-0.30), profit_captured=-250.0,
+                          pl=-2800, today=TODAY, yf_client=None, trend_ctx=ctx)
+    assert 'STOP' in dec
+    assert 'underwater' not in dec
+
+
 def test_option_normal_hold():
     # Healthy CSP, mid-DTE, small profit → HOLD-ish, score near neutral
     s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=10.0,

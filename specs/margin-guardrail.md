@@ -1,6 +1,6 @@
 # SPEC: 30% Margin Guardrail — System-Wide Enforcement
 
-> **⚠ STATUS NOTE (2026-08-09)**: This is the **implementation plan**, written 2026-07-18. As of the 2026-08-09 audit it is **only partially implemented**: only `compute_margin_usage()` (`src/risk/monitor.py:103`) exists; the three key functions below (`compute_margin_headroom`, `compute_csp_expiry_concentration`, `validate_margin_for_new_csp`) are **not yet implemented**; the margin check is still a **WARN, not BLOCK**; and `validate_margin_for_new_csp` is **not wired into the OIE loop**. The script named below as the target, `scripts/portfolio_check.py`, **does not exist** — the real surface is `scripts/portfolio.py --health`. This is **Gap B** in [`production-deployment.md`](production-deployment.md) and a documented limitation in [`guardrails-and-risk-spec.md`](guardrails-and-risk-spec.md) §8. Read this doc as the *to-do plan*, not as a description of today's behavior.
+> **⚠ STATUS NOTE (2026-08-09, updated 2026-08-16)**: This is the **implementation plan**, written 2026-07-18. As of the 2026-08-09 audit it was **only partially implemented**: only `compute_margin_usage()` (`src/risk/monitor.py:103`) exists; the three key functions below (`compute_margin_headroom`, `compute_csp_expiry_concentration`, `validate_margin_for_new_csp`) are **not yet implemented**; the margin check is still a **WARN, not BLOCK**; and `validate_margin_for_new_csp` is **not wired into the OIE loop**. The script named below as the target, `scripts/portfolio_check.py`, **does not exist** — the real surface is `scripts/portfolio.py --health`. This is **Gap B** in [`production-deployment.md`](production-deployment.md) and a documented limitation in [`guardrails-and-risk-spec.md`](guardrails-and-risk-spec.md) §8. **2026-08-16 partial fix**: the OIE engine's `buying_power = cash * 2` hardcode is gone — BP is now `cash + fund` only, so margin BP never extends CSP coverage (GOAL #4); the remaining margin items below are still open. Read this doc as the *to-do plan*, not as a description of today's behavior.
 
 **Original status**: Approved — Ready for Implementation (2026-07-18)
 **Current status**: Partially implemented — the 30% margin rule is **not yet enforced** in the paper loop.
@@ -26,17 +26,17 @@ Additionally, CSP expiry dates aren't checked for concentration risk — if all 
 
 | File | What's There | What's Missing |
 |------|-------------|----------------|
-| `config/rules.yaml:121` | `max_margin_pct: 0.30` | ✅ Already correct |
-| `src/config.py:179` | `Config.max_margin_pct` property | ✅ Already exposes it |
-| `src/data/guardrails.py:136-137` | Margin check as **WARNING** | Needs → BLOCK |
-| `src/data/guardrails.py:103` | `margin_used` param, always passed as `0` | Needs real margin data |
+| `config/rules.yaml:167` | `max_margin_pct: 0.30` | ✅ Already correct |
+| `src/config.py:228` | `Config.max_margin_pct` property | ✅ Already exposes it |
+| `src/data/guardrails.py:140` | Margin check as **WARNING** | Needs → BLOCK |
+| `src/data/guardrails.py:101` | `margin_used` param, always passed as `0` | Needs real margin data |
 | `src/risk/monitor.py:103-107` | `compute_margin_usage()` stub | Needs real margin model |
-| `scripts/portfolio_check.py` | No margin display | Needs margin metrics |
+| `scripts/portfolio.py --health` | No margin display | Needs margin metrics |
 | `scripts/screener.py` | No margin filter | Needs margin headroom gate |
-| `scripts/oie_engine.py:523` | `buying_power = cash * 2` (hardcoded) | Needs real margin calc |
+| `scripts/oie_engine.py` | ~~`buying_power = cash * 2`~~ → `cash + fund` (liquid only) | 30% utilization still not threaded |
 
 ### Key Discovery
-`scripts/portfolio_summary.py` already fetches `margin_used_pct` from moomoo's `accinfo_query` — proving live margin data is available. Currently `portfolio_check.py` calls the same API but discards the margin field.
+`src/portfolio/summary.py` already fetches `margin_used_pct` from moomoo's `accinfo_query` — proving live margin data is available. Currently `scripts/portfolio.py` calls the same API but discards the margin field.
 
 ---
 
@@ -215,7 +215,7 @@ def validate_margin_for_new_csp(
 
 ### Step 2: `src/data/guardrails.py` — Upgrade Margin Checks
 
-**Change 1** — Line 136-137: Margin over 30% becomes a BLOCK:
+**Change 1** — Line ~140 (`r.margin_used_pct` check): Margin over 30% becomes a BLOCK:
 ```python
 # BEFORE:
 if r.margin_used_pct > self.MAX_MARGIN_PCT() * 100:
@@ -361,12 +361,9 @@ print(f"🛡️  Margin: {margin_hr['pct_used']:.1f}% implied | "
 
 ### Step 5: `scripts/oie_engine.py` — Margin-Aware Execution
 
-**Change 1** — Line 523: Replace hardcoded buying power:
+**Change 1** — ~~Line 523: Replace hardcoded buying power~~ **DONE 2026-08-16** (simplified form): the engine now passes `buying_power = cash + fund` — liquid only, so margin BP never extends CSP coverage. The fuller margin-aware form below (collateral model + `margin_used=`) remains the to-do:
 ```python
-# BEFORE:
-gc = GuardrailChecker(net_liq=net_liq, cash=cash, buying_power=cash * 2, ...)
-
-# AFTER:
+# TO-DO (beyond the liquid-only fix already shipped):
 stock_mv_only = sum(
     qty * (self._stock_prices.get(t, 0) or 0)
     for t, qty in self._real_portfolio.items())

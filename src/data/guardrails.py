@@ -1,12 +1,10 @@
 """
 Portfolio Guardrails — position sizing, capital allocation, risk limits.
 
-All limits based on pro trader research (2025 consensus):
-- 15% max per position (standard: 20-25%, conservative: 15%)
-- 25% cash buffer (standard: 25%, aggressive: 10%)
-- Max 8 open wheel positions (management bandwidth limit)
-- Max 2 new trades per day (prevents overtrading)
-- 30% max margin utilization
+All limits are loaded from config/rules.yaml (position_limits) — nothing is
+hardcoded here. Current config: 25% max per position, 25% cash-buffer warn /
+10% critical block, max 10 open wheel positions, max 10 new trades/day,
+30% max margin utilization, 25% CSP deployment cap (10% in VOLATILE/BEARISH).
 - Worst-case assignment: model ALL CSPs going ITM simultaneously
 
 Usage:
@@ -46,18 +44,20 @@ class GuardrailReport:
 class GuardrailChecker:
     """
     Portfolio risk guardrails. Check before every trade.
+    All limits from config/rules.yaml (position_limits).
 
     Hard limits (BLOCK new trades):
-        - Single position > 15% of net liq
-        - All CSPs assigned simultaneously > available funds
-        - Cash buffer < 10% (critical)
-        - Daily order count > 2
+        - Cash buffer < critical % (position_limits.cash_buffer_critical)
+        - CSP capital deployed > max_csp_deployed_pct
+          (max_csp_deployed_volatile_pct when regime='VOLATILE'/'BEARISH')
 
     Soft limits (WARN only):
-        - Open wheel positions > 8
-        - Cash buffer < 25%
-        - Margin > 30%
-        - Single sector > 25%
+        - Open wheel positions > max_open_positions
+        - Cash buffer < warn %
+        - Margin > max_margin_pct
+        - Single position > max_single_position_pct
+        - Single sector > max_sector_pct
+        - Daily order count ≥ max_daily_new_positions
     """
 
     # ── Limits (loaded from config/rules.yaml) ──
@@ -102,7 +102,8 @@ class GuardrailChecker:
                  margin_used: float = 0.0,
                  open_positions: Optional[list[dict]] = None,
                  daily_order_count: int = 0,
-                 cc_assignment_notional: float = 0.0):
+                 cc_assignment_notional: float = 0.0,
+                 regime: Optional[str] = None):
         self._net_liq = net_liq
         self._cash = cash
         self._bp = buying_power
@@ -110,6 +111,7 @@ class GuardrailChecker:
         self._positions = open_positions or []
         self._daily_orders = daily_order_count
         self._cc_notional = cc_assignment_notional
+        self._regime = (regime or '').upper()
 
     def check(self) -> GuardrailReport:
         """Run all guardrails. Returns report with warnings + blocks."""
@@ -195,10 +197,16 @@ class GuardrailChecker:
 
         # ── CSP capital deployed concentration ──
         csp_deployed_pct = (csp_total / self._net_liq) if self._net_liq > 0 else 0
-        csp_limit = self._cfg().max_csp_deployed_pct
+        # VOLATILE/BEARISH regimes tighten the deployment cap
+        # (position_limits.max_csp_deployed_volatile_pct).
+        if self._regime in ('VOLATILE', 'BEARISH'):
+            csp_limit = self._cfg().max_csp_deployed_volatile_pct
+        else:
+            csp_limit = self._cfg().max_csp_deployed_pct
         if csp_deployed_pct > csp_limit:
             r.blocks.append(
-                f"CSP capital deployed {csp_deployed_pct:.1%} > {csp_limit:.0%} limit. "
+                f"CSP capital deployed {csp_deployed_pct:.1%} > {csp_limit:.0%} limit"
+                f"{f' ({self._regime} regime)' if self._regime in ('VOLATILE', 'BEARISH') else ''}. "
                 f"Close or let expire before opening new CSPs.")
 
         r.all_clear = len(r.blocks) == 0
@@ -216,7 +224,8 @@ class GuardrailChecker:
                 current_pos_pct = (pos.get('notional', 0) / self._net_liq * 100) if self._net_liq > 0 else 0
                 break
 
-        # If position already >15%, only allow CC to reduce exposure
+        # If position already over the single-position limit, only allow CC
+        # to reduce exposure
         if current_pos_pct > self.MAX_POSITION_PCT() * 100:
             is_cc = strategy in ('CC', 'COVERED_CALL')
             is_csp = strategy in ('CSP', 'CASH_SECURED_PUT')
@@ -243,6 +252,7 @@ class GuardrailChecker:
             buying_power=self._bp, margin_used=self._margin,
             open_positions=new_positions,
             daily_order_count=self._daily_orders + 1,
+            regime=self._regime,
         )
         r = gc.check()
         return r

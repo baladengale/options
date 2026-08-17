@@ -57,7 +57,7 @@ def passes_liquidity(contract, cfg: Optional[Config] = None) -> bool:
 def passes_delta(contract, strategy: str, regime: str,
                  cfg: Optional[Config] = None) -> Tuple[bool, str]:
     """Delta within config range for strategy+regime.
-    CSP also checks abs_d <= 0.70 (deep ITM = not premium selling).
+    CSP also checks abs_d <= options.delta.deep_itm_max (deep ITM = not premium selling).
     Returns (passed, reason)."""
     if cfg is None:
         cfg = get_config()
@@ -69,7 +69,7 @@ def passes_delta(contract, strategy: str, regime: str,
             return False, f'Δ {abs_d:.3f} below min {delta_range[0]}'
         if abs_d > delta_range[1]:
             return False, f'Δ {abs_d:.3f} above max {delta_range[1]}'
-        if abs_d > 0.70:
+        if abs_d > cfg.delta_deep_itm_max:
             return False, f'Δ {abs_d:.3f} deep ITM — not premium selling'
     else:  # CC
         d = contract.delta or 0
@@ -86,13 +86,16 @@ def iv_sane(contract) -> bool:
     return bool(contract.implied_vol and 0 < contract.implied_vol < 500)
 
 
-def passes_vrp(contract, hv_30d: Optional[float]) -> bool:
-    """Volatility Risk Premium gate: IV must be > HV(30d) * 0.8.
+def passes_vrp(contract, hv_30d: Optional[float],
+               cfg: Optional[Config] = None) -> bool:
+    """Volatility Risk Premium gate: IV must be > HV(30d) × options.vrp.hv_factor_min.
     We only sell premium when options are priced above actual volatility."""
+    if cfg is None:
+        cfg = get_config()
     if not contract.implied_vol:
         return False
     if hv_30d and hv_30d > 0:
-        return contract.implied_vol > hv_30d * 0.8
+        return contract.implied_vol > hv_30d * cfg.vrp_hv_factor_min
     return True  # no HV data → pass (can't check)
 
 
@@ -119,7 +122,9 @@ def passes_concentration(capital: float, net_liq: float,
 def passes_cash_buffer(capital: float, cash: float, net_liq: float,
                        buying_power: float, cfg: Optional[Config] = None,
                        csp_headroom: float = 0.0) -> bool:
-    """Cash buffer check: cash >= 10% of NLV, capital <= 80% of buying power.
+    """Cash buffer check: cash >= critical % of NLV, capital <= csp_single_cash_fraction
+    of buying power. The caller decides what counts as buying power — the OIE engine
+    passes cash + fund ONLY (margin BP never counts, GOAL #4).
 
     When csp_headroom > 0 (CSP-available headroom from worst-case formula),
     the simple cash/% check is replaced by: capital must fit within headroom.
@@ -134,7 +139,7 @@ def passes_cash_buffer(capital: float, cash: float, net_liq: float,
         cash_pct = cash / net_liq
         if cash_pct < cfg.cash_buffer_critical:
             return False
-    if capital > buying_power * 0.8:
+    if capital > buying_power * cfg.csp_single_cash_fraction:
         return False
     return True
 
@@ -182,9 +187,18 @@ def passes_all_gates(contract, strategy: str, regime: str,
     if not iv_sane(contract):
         return False, 'IV sanity'
 
+    # 3b. IV Rank gate (options.iv_rank_min) — enforced when the contract's
+    # IVR is known; unknown IVR rejects only when options.iv_rank_required.
+    ivr = getattr(contract, 'iv_rank', None)
+    if ivr is not None:
+        if ivr < cfg.iv_rank_min:
+            return False, f'IVR {ivr:.0f} < {cfg.iv_rank_min:.0f} min'
+    elif cfg.iv_rank_required:
+        return False, 'IVR unknown (options.iv_rank_required)'
+
     # 4. VRP gate
     hv = getattr(snap, 'hv_30d', None)
-    if not passes_vrp(contract, hv):
+    if not passes_vrp(contract, hv, cfg):
         return False, 'VRP'
 
     # 5. RoC minimum
