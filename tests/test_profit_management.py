@@ -226,8 +226,10 @@ def test_csp_extension_can_be_disabled(monkeypatch):
     """Disabling CSP trend_extension forces base 50% even with a strong trend."""
     from src.config import get_config
     cfg = get_config()
-    monkeypatch.setattr(cfg, 'profit_take_csp',
-                        lambda k, d=None: False if k == 'trend_extension_enabled' else d)
+    # Patch the CLASS, not the singleton instance (instance shadows outlive
+    # monkeypatch teardown — see conftest _scrub_config_singleton).
+    monkeypatch.setattr(type(cfg), 'profit_take_csp',
+                        lambda self, k, d=None: False if k == 'trend_extension_enabled' else d)
     d = decide_profit_target('CSP', 40, 40, 0.20, STRONG, 'ABUNDANT')
     assert d.target_pct == 50 and not d.extended_by_trend
 
@@ -240,7 +242,8 @@ def test_targets_read_from_config(monkeypatch):
         'base_pct': 50, 'strong_trend_target_pct': 90, 'trend_target_pct': 75,
         'trend_extension_enabled': True,
     }
-    monkeypatch.setattr(cfg, 'profit_take_csp', lambda k, d=None: fake.get(k, d))
+    monkeypatch.setattr(type(cfg), 'profit_take_csp',
+                        lambda self, k, d=None: fake.get(k, d))
     d = decide_profit_target('CSP', 40, 40, 0.20, STRONG, 'ABUNDANT')
     assert d.target_pct == 90
 

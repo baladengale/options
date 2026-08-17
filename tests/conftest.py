@@ -23,6 +23,37 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 
 # ============================================================
+# Config singleton hygiene (autouse)
+# ============================================================
+
+@pytest.fixture(autouse=True)
+def _scrub_config_singleton():
+    """Remove instance-attribute shadows leaked onto the Config singleton.
+
+    ``monkeypatch.setattr(cfg_instance, 'attr', ...)`` on the cached Config
+    singleton restores the OLD value as an INSTANCE attribute on teardown
+    (a bound method), permanently shadowing the class attribute. Any later
+    test that patches the class is then silently ignored — e.g.
+    test_eligibility.test_all_blocks_disabled failed whenever
+    test_thesis_validation.test_fundamental_health_thresholds_from_config
+    ran first. Scrub instance attrs that shadow class attrs after every test.
+    """
+    yield
+    try:
+        from src.config import get_config
+        cfg = get_config()
+        cls = type(cfg)
+        leaked = [k for k in vars(cfg) if hasattr(cls, k)]
+        for k in leaked:
+            try:
+                delattr(cfg, k)
+            except AttributeError:
+                pass
+    except Exception:
+        pass  # config not loaded (pure-fixture tests) — nothing to scrub
+
+
+# ============================================================
 # Database Fixtures
 # ============================================================
 

@@ -24,6 +24,7 @@ class TestMoomooAPI:
     """Moomoo API connectivity and data validation"""
 
     @pytest.mark.slow
+    @pytest.mark.requires_moomoo
     def test_moomoo_connection_established(self):
         """Verify Moomoo API connection can be established"""
         try:
@@ -35,6 +36,7 @@ class TestMoomooAPI:
             pytest.skip("Moomoo client not available in test environment")
 
     @pytest.mark.slow
+    @pytest.mark.requires_moomoo
     def test_moomoo_portfolio_data_freshness(self):
         """Portfolio data should be fresh (<5 minutes old)"""
         try:
@@ -53,6 +55,7 @@ class TestMoomooAPI:
             pytest.skip(f"Cannot test data freshness: {e}")
 
     @pytest.mark.slow
+    @pytest.mark.requires_moomoo
     def test_moomoo_stock_data_retrieval(self):
         """Stock snapshot retrieval works for major tickers"""
         try:
@@ -75,6 +78,7 @@ class TestMoomooAPI:
 class TestYFinanceFallback:
     """YFinance fallback system validation"""
 
+    @pytest.mark.requires_yfinance
     def test_yfinance_client_creation(self):
         """YFinance client can be instantiated"""
         try:
@@ -84,6 +88,7 @@ class TestYFinanceFallback:
             pytest.skip("yfinance not installed")
 
     @pytest.mark.slow
+    @pytest.mark.requires_yfinance
     def test_yfinance_data_retrieval(self):
         """YFinance can retrieve stock data"""
         try:
@@ -99,6 +104,7 @@ class TestYFinanceFallback:
         except Exception as e:
             pytest.skip(f"YFinance API not accessible: {e}")
 
+    @pytest.mark.requires_yfinance
     def test_yfinance_data_format_compatibility(self):
         """YFinance data format matches expected schema"""
         try:
@@ -129,6 +135,7 @@ class TestDataConsistency:
     """Cross-source data consistency validation"""
 
     @pytest.mark.slow
+    @pytest.mark.requires_yfinance
     def test_price_data_reasonableness(self):
         """Price data should be in reasonable ranges"""
         try:
@@ -155,6 +162,7 @@ class TestDataConsistency:
             pytest.skip(f"Data retrieval failed: {e}")
 
     @pytest.mark.slow
+    @pytest.mark.requires_yfinance
     def test_volume_data_validity(self):
         """Volume data should be valid and non-negative"""
         try:
@@ -181,6 +189,7 @@ class TestAPIResponseTime:
 
     @pytest.mark.slow
     @pytest.mark.timeout(10)
+    @pytest.mark.requires_yfinance
     def test_yfinance_response_time(self):
         """YFinance API should respond in <10 seconds"""
         try:
@@ -227,6 +236,7 @@ class TestDataFreshness:
 class TestErrorHandling:
     """Error handling and recovery"""
 
+    @pytest.mark.requires_yfinance
     def test_handling_invalid_ticker(self):
         """System handles invalid ticker symbols gracefully"""
         try:

@@ -145,7 +145,15 @@ class MoomooClient:
                         amplitude=self._f(row, 'amplitude'),
                         highest_52w=self._f(row, 'highest52weeks_price'),
                         lowest_52w=self._f(row, 'lowest52weeks_price'),
-                        pe_ratio=self._fn(row, 'pe_ratio'),
+                        # pe_ratio = trailing P/E (pe_ttm_ratio), matching the
+                        # yfinance fallback (trailingPE). moomoo's 'pe_ratio'
+                        # field is the STATIC last-annual-report P/E, which
+                        # lags earnings by up to 12 months and diverges from
+                        # every other P/E the framework sees (validated
+                        # 2026-08-17: ABBV static 105.7 vs TTM 70.5).
+                        pe_ratio=(self._fn(row, 'pe_ttm_ratio')
+                                  if self._fn(row, 'pe_ttm_ratio') is not None
+                                  else self._fn(row, 'pe_ratio')),
                         pb_ratio=self._fn(row, 'pb_ratio'),
                         pe_ttm=self._fn(row, 'pe_ttm_ratio'),
                         earnings_yield=self._fn(row, 'ey_ratio'),

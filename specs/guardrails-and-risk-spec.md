@@ -124,7 +124,7 @@ Helpers: `drawdown_from_basis()` (`:30`), `is_dead_zone()` (`:78`), `months_to_r
 
 `evaluate_thesis()` (`:136`): `broken = (growth_stall FAIL) OR (failed_count ≥ broken_min_gates=2)`. `fetch_thesis_inputs()` is best-effort yfinance — missing data → NO_DATA (never fabricated).
 
-**Thesis validator** (`thesis_validator.py:57`) adds 5 CRITICAL/WARNING gates (earnings trend, P/E fundamental, technical damage vs 200 SMA, HV regime, price perf vs 52w high). Status `BROKEN` if any CRITICAL, `DAMAGED` if any WARNING. Trusted tickers (`AMD, TSLA, PLTR`) skip only the high-P/E valuation check — negative-P/E still flags (solvency).
+**Thesis validator** (`thesis_validator.py:57`) adds 5 CRITICAL/WARNING gates (earnings trend, P/E fundamental, technical damage vs 200 SMA, HV regime, price perf vs 52w high). Status `BROKEN` if any CRITICAL, `DAMAGED` if any WARNING. Trusted tickers (`AMD, TSLA, PLTR`) skip only the high-P/E valuation check — negative-P/E still flags (solvency). P/E basis is **TTM** (`moomoo pe_ttm_ratio`, falling back to the static field; matches the yfinance `trailingPE` fallback) — validated 2026-08-17: ABBV static 105.7 vs TTM 70.5 changed the thesis verdict from BROKEN to DAMAGED.
 
 ---
 

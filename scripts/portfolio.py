@@ -939,10 +939,23 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage,
                          f"(cash-backed) instead of the full strike. "
                          f"Run: python3 scripts/screener.py --ps-only"))
 
-    broken = [t for t, r in thesis_results.items() if r.status == ThesisStatus.BROKEN]
+    # Thesis recommendations must be split by whether the ticker is actually
+    # HELD (stock or option underlying) or watchlist-only. "Exit position" is
+    # meaningless for a watchlist ticker — there is nothing to close. A
+    # watchlist-only broken thesis means "don't open a wheel here", not "sell".
+    held = set(pf.stocks.keys()) | {o['ticker'] for o in pf.options.values()}
+    broken = [t for t, r in thesis_results.items()
+              if r.status == ThesisStatus.BROKEN and t in held]
+    broken_watch = [t for t, r in thesis_results.items()
+                    if r.status == ThesisStatus.BROKEN and t not in held]
     if broken:
         recs.append(("CRITICAL", f"Exit broken-thesis positions: {', '.join(broken)}",
                      "Close, then add to Do-Not-Wheel list for 6 months."))
+    if broken_watch:
+        recs.append(("MEDIUM",
+                     f"Do-not-wheel (broken thesis, watchlist-only): {', '.join(broken_watch)}",
+                     "Not held — nothing to exit. Skip any new CC/CSP entries on these "
+                     "tickers; add to Do-Not-Wheel if it stays in the watchlist."))
     damaged = [t for t, r in thesis_results.items() if r.status == ThesisStatus.DAMAGED]
     if damaged:
         recs.append(("HIGH", f"Monitor damaged-thesis positions: {', '.join(damaged)}",

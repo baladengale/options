@@ -1,0 +1,2 @@
+0 7 * * * OIE_REPO=/Users/bala/workspace/options /Users/bala/workspace/options/.venv/bin/python3 /Users/bala/workspace/options/skills/oie/scripts/daily_digest.py --morning --send >> /Users/bala/workspace/options/logs/digest-cron.log 2>&1
+0 19 * * * OIE_REPO=/Users/bala/workspace/options /Users/bala/workspace/options/.venv/bin/python3 /Users/bala/workspace/options/skills/oie/scripts/daily_digest.py --evening --send >> /Users/bala/workspace/options/logs/digest-cron.log 2>&1
