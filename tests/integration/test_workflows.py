@@ -404,6 +404,7 @@ class TestPortfolioAnalysisWorkflow:
 class TestErrorRecoveryWorkflows:
     """Error handling and recovery workflows"""
 
+    @pytest.mark.requires_yfinance
     def test_data_source_failure_recovery(self):
         """System recovers when primary data source fails"""
         try:

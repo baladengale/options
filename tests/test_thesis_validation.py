@@ -154,10 +154,14 @@ def test_fundamental_health_thresholds_from_config(monkeypatch):
     from src.config import get_config
     cfg = get_config()
     # Raise the critical threshold so P/E 150 is only a WARNING, not CRITICAL
-    monkeypatch.setattr(cfg, 'thesis_validation', lambda k, d=None: {
-        'pe_ratio_warning': 50, 'pe_ratio_critical': 250,
-        'pe_negative_critical': True,
-    }.get(k, d))
+    # Patch the CLASS, not the singleton instance — an instance patch leaves
+    # a shadow attribute on the cached Config that outlives monkeypatch
+    # teardown and silently overrides later class patches (see conftest).
+    monkeypatch.setattr(type(cfg), 'thesis_validation',
+                        lambda self, k, d=None: {
+                            'pe_ratio_warning': 50, 'pe_ratio_critical': 250,
+                            'pe_negative_critical': True,
+                        }.get(k, d))
     monkeypatch.setattr(type(cfg), 'trusted_tickers', set())
     snap = _snap(pe_ratio=150.0)
     check = _check_fundamental_health('TEST', snap)

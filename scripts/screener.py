@@ -39,6 +39,7 @@ from src.data.compute import enrich_stock_snapshot
 from src.data.models import StockSnapshot, OptionSnapshot, TradeCandidate
 from src.data.watchlist import fetch_live_watchlist
 from src.data.do_not_wheel_list import DoNotWheelList, is_wheel_eligible
+from src.data.guardrails import GuardrailChecker, SECTOR_MAP
 from src.filters.contract_filters import passes_all_gates, cc_roc
 from src.analysis.sentiment import (
     get_macro_context, get_ticker_sentiment, get_watchlist_sentiment,
@@ -149,10 +150,54 @@ def main():
                 print(f"🔍 Validate mode — scanning: {target.upper()} (adhoc, not in watchlist)")
             print()
         # ── SCAN EACH TICKER (dedup at end — don't skip entire ticker) ──
-        # OPTIMIZATION: Batch all stock snapshots upfront (1 API call vs N)
-        all_snaps = moomoo.get_stock_snapshots(WATCHLIST)
+        # OPTIMIZATION: Batch all stock snapshots upfront (1 API call vs N).
+        # Includes held tickers that aren't in the watchlist (VOO, SKHY, …)
+        # so the guardrail NLV below prices the WHOLE portfolio — same
+        # formula as Portfolio.net_liquidation in portfolio.py.
+        all_snaps = moomoo.get_stock_snapshots(
+            list(set(WATCHLIST + [f'US.{t}' for t in PORTFOLIO.keys()])))
         snap_map = {s.ticker: s for s in all_snaps}
         spy_history = moomoo.get_price_history('US.SPY', 252)  # cached after first fetch
+
+        # ── PORTFOLIO GUARDRAILS (same GuardrailChecker as portfolio.py /
+        #    the OIE engine — keeps all three surfaces in agreement) ──
+        # When the portfolio-level CSP blocks fire (CSP capital deployed over
+        # limit, cash buffer critical), new CSP candidates are suppressed.
+        # CC candidates are unaffected (share-secured, not cash-secured).
+        # --force skips this like every other gate.
+        csp_blocked_reasons: list[str] = []
+        if not args.force:
+            snap_px = {s.ticker: s.last_price for s in all_snaps if s.last_price}
+            stock_mv = sum(
+                qty * snap_px.get(f'US.{t}', 0) for t, qty in PORTFOLIO.items())
+            nlv = (CASH + FUND) + stock_mv  # same formula as Portfolio.net_liquidation
+            opt_tickers = {o.get('ticker') for o in OPTIONS_DICT.values()}
+            gc_positions = [{
+                'ticker': t,
+                'notional': qty * snap_px.get(f'US.{t}', 0),
+                'sector': SECTOR_MAP.get(t, 'Unknown'),
+                'csp_liability': sum(
+                    abs(o['strike']) * abs(o['qty']) * 100
+                    for o in OPTIONS_DICT.values()
+                    if o.get('ticker') == t and o.get('type') == 'PUT'),
+            } for t, qty in PORTFOLIO.items() if t in opt_tickers]
+            cc_assignment = sum(
+                abs(o['strike']) * abs(o['qty']) * 100
+                for o in OPTIONS_DICT.values() if o.get('type') == 'CALL')
+            gc = GuardrailChecker(net_liq=nlv, cash=CASH + FUND,
+                                  buying_power=BUYING_POWER,
+                                  open_positions=gc_positions,
+                                  cc_assignment_notional=cc_assignment,
+                                  regime=regime)
+            gr = gc.check()
+            csp_blocked_reasons = [b for b in gr.blocks
+                                   if 'CSP' in b or 'cash' in b.lower()]
+            if csp_blocked_reasons:
+                print(f"🛡️  CSP candidates suppressed — portfolio guardrail BLOCK active:")
+                for b in csp_blocked_reasons[:2]:
+                    print(f"     🔴 {b}")
+                print()
+                log.info(f"CSP_SUPPRESSED|blocks={'|'.join(csp_blocked_reasons)}")
 
         for ticker in WATCHLIST:
             short = ticker.replace('US.', '')
@@ -242,6 +287,12 @@ def main():
             for c in contracts:
                 # ── CSP candidates ──
                 if not args.cc_only and not args.ps_only and c.option_type == 'PUT':
+                    # Portfolio-level CSP block (deployed % over limit / cash
+                    # critical) — same rule the OIE engine enforces at execute
+                    # time. Suppressed here so the screener never surfaces a
+                    # CSP the guardrails would refuse. --force bypasses.
+                    if csp_blocked_reasons:
+                        continue
                     abs_d = abs(c.delta or 0)
                     # CSP headroom: how much ADDITIONAL CSP capital fits within the
                     # worst-case coverage formula. Uses the same formula as guardrails:
