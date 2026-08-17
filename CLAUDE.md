@@ -150,13 +150,13 @@ A put credit spread (PCS) is the right substitute for a CSP when you want the sa
 - Single position ≤ 25% net liq hard cap (15% in EMERGENCY stage) | Sector ≤ 25% | CSP deployed ≤ 25% net liq (≤ 10% volatile, ≤ 15% EMERGENCY) | Open option positions ≤ 10
 - Collar rule: CC only on ≥100 FREE shares (net of shares committed to open short calls)
 
-## Local File-Based Database (SQLite)
+## Paper Portfolio Database (SQLite — OIE only)
 
-- **Location**: `db/options.db` — created at runtime, NEVER committed (.gitignored)
-- **Schema**: defined in `src/db/schema.py` — code IS the schema documentation
-- **Tables**: portfolio_snapshots, holdings, orders, open_positions, watchlist, options_chain_cache, price_history, signals_log, daily_digest
-- **Freshness**: Every table row has `synced_at`. Before any analysis, sync from moomoo and verify freshness. Stale data = abort.
-- **Sync engine**: `src/db/sync.py` orchestrates all data refresh. Runs before every recommendation/digest.
+- **Location**: `db/oie_paper.db` — created at runtime, NEVER committed (.gitignored)
+- **Schema**: defined in `src/data/oie_db.py` `_init_schema` — code IS the schema documentation
+- **Tables**: `paper_state` (key-value), `paper_positions`, `paper_trades` (full audit log — every cash movement is a `cash_change` row), `paper_snapshots`
+- **Cash invariant**: single-writer — all cash flows through `_log_trade(cash_impact=...)`; derived cash (`seeded_cash + Σ cash_change`) always equals stored state. The engine never mutates cash locally.
+- **Real-account data is NOT persisted** — portfolio/order/position state is fetched live from moomoo each run (see `specs/architecture-spec.md`).
 
 ## Data Sources
 
@@ -175,8 +175,9 @@ A put credit spread (PCS) is the right substitute for a CSP when you want the sa
 
 ## Watchlist Universe
 
-Target tech stocks with liquid options chains. Example universe (research required before acting):
-- MSFT, GOOGL, AAPL, AMZN, NVDA, META, AVGO, ADBE, CRM, AMD
+Watchlist lives in `config/rules.yaml → watchlist` (moomoo group `Options` is the live source; YAML is the fallback). Default universe (research required before acting):
+- V, MSFT, GOOGL, AAPL, AMZN, NVDA, META, AVGO, CRM, AMD, TSLA, BE
+- Diversification candidates per sector: `watchlist.diversify` (JPM/BAC/GS · ABBV/JNJ/UNH · KO/WMT/PG · XOM/CVX · CAT/GE/HON)
 
 Not an endorsement — each must pass the full research workflow below.
 
@@ -188,12 +189,12 @@ Sync from Moomoo → Trend/Momentum → Options Chain → Fundamental → Correl
 
 ## Scoring Engine (Deterministic)
 
-The WHEEL_SCORE is a weighted composite (0-100) with 5 components:
+The WHEEL_SCORE is a weighted composite (0-100) with 5 components (weights in `config/rules.yaml → scoring.weights`):
 - **Trend/Momentum** (25%): SMA alignment (20/50/200), ADX strength, RSI(14), MACD
 - **Options Chain** (25%): spread, OI, volume, IV/HV, term structure
 - **Fundamental** (15%): revenue growth, EPS quality, FCF yield, D/E, PEG
-- **Sentiment** (20%): deterministic composite of trend + momentum + IV + volume + price action
-- **Correlation** (15%): 1Y rolling correlation vs V — if >0.8, hard fail
+- **External Sentiment** (20%): deterministic composite of trend + momentum + IV + volume + price action
+- **Macro Risk** (15%): regime positioning (VIX band, breadth, credit)
 
 14 hard constraint gates. Any single failure → score = 0, signal = AVOID.
 
@@ -222,7 +223,7 @@ Generated once per day. Contains:
 - **Notebooks for research**: each stock under consideration gets its own research notebook tracking the analysis journey and decision rationale.
 - **Config-driven parameters**: portfolio state, watchlists, position sizing rules, and strategy parameters live in config files, never hardcoded.
 - **Paper-trade before live**: every strategy change runs against historical data before touching real money.
-- **DB-driven**: all operational data in SQLite. YAML configs are for initial seed and manual overrides only. The DB is the runtime source of truth.
+- **Config-driven**: all thresholds live in `config/rules.yaml`; YAML is the single source of truth for limits, and the OIE paper DB (`db/oie_paper.db`) is the audit trail. Real-account state is always fetched live, never persisted.
 - **Freshness-first**: sync from moomoo before every analysis run. Never proceed with stale data.
 
 ## AI Runtime Boundary

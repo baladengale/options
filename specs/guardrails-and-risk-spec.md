@@ -16,7 +16,7 @@
 | **Scope** | Called every OIE cycle + by screener, per proposed trade | Portfolio-health narrative; adapts limits to cash-buffer tier |
 | **Severity** | Binary BLOCK / WARN | CRITICAL / BLOCK / WARN with `required_action` |
 | **Config section** | `position_limits` | `guardrail_limits` |
-| **Wired into engine loop?** | **Yes** (`oie_engine.py:621`) | No (display/advisory) |
+| **Wired into engine loop?** | **Yes** (`oie_engine.py:647`, with `regime=` threaded so the CSP-deployment block tightens in VOLATILE/BEARISH) | No (display/advisory) |
 | **Output** | `GuardrailReport(blocks, warnings, ...)` | `List[GuardrailViolation]` |
 
 ---
@@ -27,7 +27,7 @@
 | Check | Rule |
 |-------|------|
 | Cash buffer | `< cash_buffer_critical` (10% NLV) |
-| CSP deployed | `> max_csp_deployed_pct` (25% normal; 10% volatile) |
+| CSP deployed | `> max_csp_deployed_pct` (25% normal; **10% when the checker is constructed with `regime='VOLATILE'/'BEARISH'`** — the OIE engine threads its regime, wired 2026-08-16) |
 
 ### WARNs (soft — surface but don't block)
 | Check | Rule |
@@ -76,7 +76,7 @@ The 0.50 haircuts are conservative: only half of margin BP and half of CC-assign
 
 ## 4. CSP pause triggers (stop new CSPs)
 
-`Config.should_pause_csp(vix, regime_score, cash_reserve_pct)` returns `(paused: bool, reasons: list)`. Paused if ANY:
+`Config.should_pause_csp(vix, regime_score, cash_reserve_pct, spy_price, spy_sma)` returns `(paused: bool, reasons: list)` — all five triggers implemented (2026-08-16). Paused if ANY:
 
 | Trigger | Threshold | Config |
 |---------|-----------|--------|
@@ -85,6 +85,8 @@ The 0.50 haircuts are conservative: only half of margin BP and half of CC-assign
 | Regime too bearish | `≤ −2` (VOLATILE or worse) | `csp_pause.regime_min_score` |
 | Cash reserve too thin | `< 20%` NLV | `csp_pause.cash_reserve_below_pct` |
 | Stock dropped from basis | `> 15%` (per-ticker) | `csp_pause.stock_drop_from_basis_pct` |
+
+**Wired into the OIE engine** (`_csp_pause_reasons`, `oie_engine.py:921`): the global triggers run once per screen (skipping the whole CSP branch when paused) and again per-trade at execution; the per-ticker basis-drop trigger is checked per candidate. Data-blind triggers (no macro/SPY data available) do not fire — the engine never blocks on unknowns.
 
 When CSP is paused, the engine's `bypass_scarce_when_csp_paused` profit-take path activates (let CSP winners ride rather than close for redeployment — there's no CSP slot to redeploy into).
 
@@ -151,7 +153,7 @@ implied_loan      = max(0, existing_csp_liability − cash)
 margin_headroom   = max_margin_loan − implied_loan     (additional CSP assignable before cap)
 ```
 
-> ⚠ **Status: PROPOSED, partially implemented.** The config has `max_margin_pct: 0.30` and the guardrail *should* BLOCK on it, but: (a) `GuardrailChecker.check()` issues margin as a **WARN, not BLOCK**; (b) the OIE engine calls `check_new_trade` but does **not** call `validate_margin_for_new_csp` before CSP execution; (c) live `margin_used_pct` is fetched from moomoo but not consistently threaded into the engine. **The 30% margin rule is therefore not enforced in the paper loop.** See [production-deployment.md](production-deployment.md) §3 for the gap and the fix path. The spec (`margin-guardrail.md`) is the implementation plan.
+> ⚠ **Status: PROPOSED, partially implemented.** The config has `max_margin_pct: 0.30` and the guardrail *should* BLOCK on it, but: (a) `GuardrailChecker.check()` issues margin as a **WARN, not BLOCK**; (b) the OIE engine calls `check_new_trade` but does **not** call `validate_margin_for_new_csp` before CSP execution; (c) live `margin_used_pct` is fetched from moomoo but not consistently threaded into the engine. **The 30% margin rule is therefore not enforced in the paper loop.** *Mitigation (2026-08-16): the engine passes `buying_power = cash + fund` only — margin BP never extends CSP coverage, so the paper book cannot implicitly borrow; the utilization WARN and 15-day clear window remain open.* See [production-deployment.md](production-deployment.md) §3 for the gap and the fix path. The spec (`margin-guardrail.md`) is the implementation plan.
 
 ---
 
@@ -175,11 +177,11 @@ margin_headroom   = max_margin_loan − implied_loan     (additional CSP assigna
 |-------|:---:|:---:|------|
 | Single position | ≤ 25% NLV (target 15%) | — | BLOCK in Layer 2 EMERGENCY (15%) |
 | Sector | ≤ 25% | — | WARN |
-| CSP deployed | ≤ 25% NLV | ≤ 10% | BLOCK |
+| CSP deployed | ≤ 25% NLV | ≤ 10% (enforced via `regime=`) | BLOCK |
 | Cash buffer | ≥ 15% (warn) | — | BLOCK at < 10% |
 | Open positions | ≤ 10 | — | WARN |
-| New positions/day | ≤ 2 | — | WARN |
-| **Margin** | **≤ 30%** (15-day clear) | — | ⚠ WARN (should be BLOCK — see §8) |
+| New positions/day | ≤ 10/day config · ≤ 2 per engine cycle (`max_new_positions_per_cycle`) · ≤ 2 profit-closes per ticker/month · 14-day same-strike reopen cooldown | — | cycle/cooldown = engine BLOCK; rest WARN |
+| **Margin** | **≤ 30%** (15-day clear) | — | ⚠ WARN (should be BLOCK — see §8). Mitigation: engine BP = cash + fund only, so margin never extends CSP coverage |
 
 ---
 

@@ -956,10 +956,14 @@ def _print_recommendations(pf, orders, nlv, thesis_results, violations, stage,
                          "Sell CCs on V; let assignment convert shares to cash for redeployment."))
 
     monthly = _filled_orders_this_month(orders)
-    if monthly > 10:
+    monthly_target = int(cfg.guardrail_limits('max_monthly_orders_target', 30))
+    monthly_emergency = int(cfg.guardrail_limits('max_monthly_orders_emergency', 15))
+    if monthly > monthly_target:
         recs.append(("HIGH", "Reduce trading frequency to a systematic Wheel",
-                     f"{monthly} filled orders this month — target 8–10/month. "
-                     f"Use the daily review at 09:00 UTC; let positions expire naturally."))
+                     f"{monthly} filled orders this month — guardrail "
+                     f"{monthly_emergency} (emergency) / {monthly_target} (target) "
+                     f"per month. Use the daily review at 09:00 UTC; let positions "
+                     f"expire naturally."))
 
     # Roll winners (trend-modulated): bank the accrued profit AND stay in the
     # thesis instead of flat-closing. Recommend-only for the real portfolio;

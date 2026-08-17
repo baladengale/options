@@ -13,7 +13,7 @@
 |----------|----------|
 | **Read-only on the real account** | `moomoo_client.py` wraps only `OpenQuoteContext`; `portfolio_loader.py` reads but never places orders. `grep -rn "place_order\|TrdEnv.SIMULATE" src/ scripts/ skills/` → nothing executable. |
 | **Layered architecture, no cross-script imports** | `grep -rn "from scripts\." scripts/` → nothing. Enforced. |
-| **Single source of truth for thresholds** | Every threshold in `config/rules.yaml` → `src/config.py`. No hardcoded values in scripts/analysis. |
+| **Single source of truth for thresholds** | Every threshold in `config/rules.yaml` → `src/config.py`. No hardcoded values in scripts/analysis. (2026-08-16 sweep: the last hardcoded gates — `cash*2` buying power, 2/cycle cap, spread/DTE/VRP/deep-ITM/earnings literals — now read from config.) |
 | **Deterministic decision core** | `decide_exit_action()` is a pure function; 701 tests pin its behavior. AI is narrative-only. |
 | **Two-layer guardrails** | Per-trade BLOCK/WARN + staged recovery; coverage check; roll discipline; thesis-break gates. |
 | **Paper DB audit trail** | `paper_trades` logs every event with `cash_change`; cash is derived (`seeded_cash + Σ cash_change`), never stale. |
@@ -35,9 +35,9 @@ The engine runs on **live snapshots only**. You cannot replay 2008, 2020, or 202
 ### Gap B — **Margin rule is WARN, not BLOCK, in the loop** 🟡 (important)
 The config has `max_margin_pct: 0.30` (GOAL.md #4: never prefer margin, 30% max, 15-day clear). But:
 - `GuardrailChecker.check()` issues margin as a **WARN**, not BLOCK.
-- The OIE engine calls `check_new_trade` but does **not** call `validate_margin_for_new_csp` before CSP execution.
-- Live `margin_used_pct` is fetched from moomoo but not consistently threaded into the engine.
-- `oie_engine.py:523` historically hardcoded `buying_power = cash * 2`.
+- The OIE engine calls `check_new_trade` but does **not** call `validate_margin_for_new_csp` before CSP execution (the function is still pseudocode — see `specs/margin-guardrail.md`).
+- Live `margin_used_pct` is fetched from moomoo but not consistently threaded into the engine (`margin_used` defaults to 0).
+- ~~`oie_engine.py` hardcoded `buying_power = cash * 2`~~ **FIXED 2026-08-16**: the engine now passes `buying_power = cash + fund` only, so margin BP never extends CSP coverage (GOAL #4). The 30% WARN and the 15-day clear window remain open.
 
 **The risk**: a CSP-heavy paper book can implicitly borrow against stock collateral without tripping the 30% rule. In a correlated downturn this is exactly the "hidden leverage" the playbook warns about (§2: cash-secured is full-notional equity exposure deferred).
 
