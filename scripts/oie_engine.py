@@ -61,6 +61,10 @@ log = get_logger('oie')
 RUNNING = True
 DEFAULT_INTERVAL_MIN = 30
 
+# Post-seed grace window (seconds): skip exit decisions for the first cycle
+# after seeding so real-world-seeded positions aren't immediately rolled/closed.
+SEED_GRACE_SECONDS = 300
+
 # US market hours (Eastern). Summer EDT = UTC-4, winter EST = UTC-5
 MARKET_OPEN_HOUR = 9
 MARKET_OPEN_MIN = 30
@@ -98,6 +102,33 @@ def is_market_open() -> tuple[bool, str]:
         return False, f"Market closed — after hours ({eastern_hour:02d}:{eastern_minute:02d} ET)"
 
     return True, f"Market open ({eastern_hour:02d}:{eastern_minute:02d} ET)"
+
+
+def within_seed_grace(seeded_at_str: str, now: Optional[datetime] = None) -> bool:
+    """True while still inside the post-seed grace window (default 300s).
+
+    Positions seeded from the REAL account reflect real-world entry prices and
+    deltas — they must not be immediately rolled/closed on the first cycle after
+    seeding. The window is anchored to ``seeded_at`` (the time the portfolio was
+    seeded) and compared against ``now``.
+
+    NOTE: this must NOT be anchored to each position's ``created_at``. Seed rows
+    are all written within milliseconds of ``seeded_at``, so a per-position
+    ``abs(created_at - seeded_at) < 300`` comparison is true forever and would
+    permanently suppress exit decisions for every seed-time position.
+    """
+    if not seeded_at_str:
+        return False
+    try:
+        seeded_at = datetime.fromisoformat(seeded_at_str)
+    except (ValueError, TypeError):
+        return False
+    now = now or datetime.now()
+    try:
+        elapsed = (now - seeded_at).total_seconds()
+    except TypeError:
+        return False
+    return elapsed < SEED_GRACE_SECONDS
 
 
 def _signal_handler(sig, frame):
@@ -447,17 +478,14 @@ class OIEEngine:
             active_options = self.db.get_active_options()  # refresh after MTM
             today = date.today()
 
-            # ── Seed grace period: skip exit decisions for just-seeded positions.
-            # Positions seeded from the real portfolio reflect real-world entry
-            # prices/deltas — they should NOT be immediately rolled/closed on the
-            # first cycle. A 300s window after seeded_at covers the first cycle.
-            seeded_at_str = self.db.get_state('seeded_at', '')
-            seeded_at = None
-            if seeded_at_str:
-                try:
-                    seeded_at = datetime.fromisoformat(seeded_at_str)
-                except (ValueError, TypeError):
-                    pass
+            # ── Seed grace period: skip exit decisions for the first cycle after
+            # seeding. Positions seeded from the real portfolio reflect real-world
+            # entry prices/deltas and must NOT be immediately rolled/closed. The
+            # 300s window is measured from seeded_at — not from each position's
+            # created_at (which for seed rows is ~equal to seeded_at and would
+            # keep the grace period from ever expiring).
+            grace_active = within_seed_grace(
+                self.db.get_state('seeded_at', ''), now=datetime.now())
 
             for pos in active_options:
                 entry = pos['entry_premium'] or 0
@@ -481,16 +509,11 @@ class OIEEngine:
                 if current_bid <= 0 and dte > 0:
                     continue
 
-                # Skip exit decisions for positions created during the seed —
-                # they haven't had a full cycle yet. (Grace window: ±5 min of
-                # seeded_at, covering the seed + first cycle window.)
-                if seeded_at and pos.get('created_at'):
-                    try:
-                        pos_created = datetime.fromisoformat(pos['created_at'])
-                        if abs((pos_created - seeded_at).total_seconds()) < 300:
-                            continue  # grace period — skip exit decisions
-                    except (ValueError, TypeError):
-                        pass
+                # Skip exit decisions during the post-seed grace window (first
+                # cycle after seeding) — seeded positions haven't had a full
+                # cycle yet.
+                if grace_active:
+                    continue
 
                 profit_captured = ((entry - current_bid) / entry * 100) if entry > 0 else 0
                 delta = abs(pos.get('current_delta', 0) or 0)
