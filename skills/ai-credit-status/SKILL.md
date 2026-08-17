@@ -35,7 +35,7 @@ python3 skills/ai-credit-status/scripts/ai_credit_status.py --json
 1. Z.AI/GLM always preferred - status confirmed live by a 1-token test message (model from ~/.balarc_zai, suffix stripped, then live /models list).
 2. If Z.AI rate limited / out of balance / error -> DeepSeek fallback.
 3. Peak hours hardcoded (SGT) shown as warning when active:
-   - DeepSeek: PEAK 09-12 & 14-18 daily (2x) / OFF (1x)
+   - DeepSeek: PEAK 09-12 & 14-18 daily (Beijing/SGT, UTC+8) (2x) / OFF (1x) — time-of-day billing since 2026-08-17
    - Z.AI/GLM: PEAK 14-18 Mon-Fri (1.0x) / OFF (0.5x) + rolling 5h limit
 
 On 5h limit Z.AI returns "limit will reset at <ts>"; script parses and shows countdown.

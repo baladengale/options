@@ -28,7 +28,7 @@ DS_BAL = "https://api.deepseek.com/user/balance"
 ZAI_CHAT = "https://api.z.ai/api/anthropic/v1/messages"
 ZAI_MODELS = "https://api.z.ai/api/paas/v4/models"
 # Hardcoded peak hours (SGT/UTC+8)
-DS_PEAK = ((9, 12), (14, 18))     # DeepSeek daily: 09-12 & 14-18, 2x price
+DS_PEAK = ((9, 12), (14, 18))     # DeepSeek daily peak 09-12 & 14-18 (Beijing/SGT, UTC+8); time-of-day billing since 2026-08-17, off-peak = 50% of peak
 ZAI_PEAK = ((14, 18),)            # Z.AI Mon-Fri: 14-18, 1.0x (0.5x off-peak)
 EXH = ("insufficient balance", "no resource package")
 RATE = ("usage limit reached", "rate limit", "ratelimit", "too many")
