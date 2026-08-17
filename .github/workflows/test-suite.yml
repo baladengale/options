@@ -156,13 +156,13 @@ jobs:
           pytest tests/ -v --tb=short --cov=src --cov-report=html --cov-report=term -m "not slow" || echo "Test suite completed with some failures"
 
       - name: Archive test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: htmlcov/
 
       - name: Archive coverage reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
           path: coverage.xml
