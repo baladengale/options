@@ -870,8 +870,10 @@ class OIEEngine:
     def _trend_ctx(self, ticker: str) -> TrendContext:
         """Build a TrendContext for one underlying (best-effort, cached per cycle).
 
-        Reuses the shared _trend_composite so the paper engine's exit decisions
-        see the same 0-100 number the entry screen scored on.
+        The trend composite comes from the canonical spec formula
+        (trend_composite_from_snapshot: 0.5×alignment + 0.3×ADX + 0.2×momentum)
+        so the paper engine's exit decisions see the same 0-100 number the
+        entry screen scored on.
         """
         cache = getattr(self, '_trend_cache', None)
         if cache is None:

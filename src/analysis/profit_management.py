@@ -299,16 +299,18 @@ def loss_alert_should_hard_stop(
 
 def trend_context_from_snapshot(snap, sentiment_score=None, sentiment_direction=None,
                                 iv_rank=None) -> TrendContext:
-    """Assemble a TrendContext from a StockSnapshot using the shared composite.
+    """Assemble a TrendContext from a StockSnapshot using the canonical composite.
 
-    `snap` must already be enriched (have sma/rsi fields). The trend composite
-    reuses src.scoring.screener_score._trend_composite so the exit layer sees the
-    SAME 0-100 number the entry layer scored on — no second definition.
+    `snap` must already be enriched (have sma/rsi/macd fields). The trend
+    composite comes from src.analysis.trend.trend_composite_from_snapshot —
+    the SPECS §5.3 formula (0.5×alignment + 0.3×ADX + 0.2×momentum). Returns
+    None on missing anchors (short/absent history) so the profit gates treat
+    it as "no signal" instead of extending on fake data.
     """
     tc = None
     try:
-        from src.scoring.screener_score import _trend_composite
-        tc = _trend_composite(snap)
+        from src.analysis.trend import trend_composite_from_snapshot
+        tc = trend_composite_from_snapshot(snap)
     except Exception:
         tc = None
     return TrendContext(

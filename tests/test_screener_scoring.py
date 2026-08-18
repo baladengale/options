@@ -107,6 +107,13 @@ def test_trend_composite_bearish():
     assert score < 40  # weak signal
 
 
+def test_trend_composite_missing_sma_is_none():
+    """No SMA anchors → None, never a silent neutral 50-60 that could be
+    misread as a confirmed trend by the profit-target gates."""
+    snap = _stock_snap(sma_50=None, sma_200=None)
+    assert _trend_composite(snap) is None
+
+
 # ═══════════════════════════════════════════════════════════════
 # SCORING SUB-COMPONENTS
 # ═══════════════════════════════════════════════════════════════

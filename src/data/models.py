@@ -69,6 +69,7 @@ class StockSnapshot:
 
     # *Computed* — filled later by compute module
     change_pct: float = 0.0            # (last - prev_close) / prev_close × 100
+    history_points: int = 0            # daily closes actually used for the indicators
     rsi_14: Optional[float] = None
     sma_20: Optional[float] = None
     sma_50: Optional[float] = None

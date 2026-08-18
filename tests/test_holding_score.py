@@ -157,6 +157,57 @@ def test_option_normal_hold():
     assert 'HOLD' in dec or 'monitor' in dec.lower() or 'captured' in dec.lower() or 'Management Point' in dec
 
 
+# ── trend tag (strategy-aware, always-on for non-action decisions) ──
+
+def test_trend_label_strategy_aware():
+    from src.scoring.holding_score import _trend_label
+    assert _trend_label('CSP', 75) == 'trend 75▲'
+    assert _trend_label('CC', 75) == 'trend 75▲⚠️'     # uptrend hurts short calls
+    assert _trend_label('CSP', 30) == 'trend 30▼⚠️'    # downtrend hurts short puts
+    assert _trend_label('CC', 30) == 'trend 30▼'
+    assert _trend_label('CSP', 50) == 'trend 50→'
+    assert _trend_label('CC', None) == 'trend —'
+
+
+def test_option_underwater_gets_strategy_aware_trend_tag():
+    # Underwater HOLD rows carry the trend tag — the same signal that explains
+    # WHY the loser is underwater. CSP + uptrend = tailwind, no warning.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=72, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, _pd = _score_option(_pos(), _opt(dte=32, delta=-0.30), profit_captured=-20.0,
+                          pl=-200, today=TODAY, yf_client=None, trend_ctx=ctx)
+    assert 'underwater' in dec
+    assert 'trend 72▲' in dec
+
+
+def test_option_cc_uptrend_tag_flags_headwind():
+    # For a short call the SAME uptrend is a headwind — the tag must say so.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=72, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, _pd = _score_option(_pos(type='CALL'), _opt(dte=32, delta=-0.20),
+                          profit_captured=-28.0, pl=-300, today=TODAY, yf_client=None,
+                          trend_ctx=ctx)
+    assert 'trend 72▲⚠️' in dec
+
+
+def test_option_no_trend_data_shows_dash():
+    # No trend context → the tag renders as 'trend —' so missing data is
+    # visible instead of silently absent.
+    s, dec, _pd = _score_option(_pos(), _opt(dte=32, delta=-0.30), profit_captured=-20.0,
+                          pl=-200, today=TODAY, yf_client=None)
+    assert 'trend —' in dec
+
+
+def test_option_action_decisions_skip_trend_tag():
+    # CLOSE/ROLL/STOP-tier rows are actions, not holds — no trend tag.
+    from src.analysis.profit_management import TrendContext
+    ctx = TrendContext(trend_composite=72, sentiment_direction='BULLISH', iv_rank=40)
+    s, dec, _pd = _score_option(_pos(), _opt(dte=40, delta=-0.20), profit_captured=-300.0,
+                          pl=-3000, today=TODAY, yf_client=None, trend_ctx=ctx)
+    assert 'STOP TIER' in dec
+    assert 'trend' not in dec
+
+
 def test_option_score_always_in_range():
     """No combination of inputs should push the score outside 1-10."""
     for pc in (-400, -200, -50, 0, 30, 60, 90):

@@ -300,3 +300,46 @@ def test_emergency_reason_only_notes_override_when_bypass_would_have_fired(bypas
                              csp_paused=False, emergency=True)
     assert d.action == PD.ACTION_CLOSE and d.target_pct == 50
     assert 'EMERGENCY' not in d.reason
+
+
+# ── trend_context_from_snapshot: no-data honesty (2026-08-19) ────
+# The composite must refuse (None) when the alignment anchors are missing or
+# the history is short — a silent neutral 50-60 used to masquerade as a
+# confirmed trend and wrongly extend CSP targets to 70%+.
+
+def _snap(**kw):
+    from src.data.models import StockSnapshot
+    d = dict(ticker='TEST', name='Test', last_price=110.0)
+    d.update(kw)
+    return StockSnapshot(**d)
+
+
+def test_trend_context_missing_anchors_is_none():
+    from src.analysis.profit_management import trend_context_from_snapshot
+    ctx = trend_context_from_snapshot(_snap())  # no sma, no history_points
+    assert ctx.trend_composite is None
+
+
+def test_trend_context_short_history_is_none():
+    from src.analysis.profit_management import trend_context_from_snapshot
+    snap = _snap(sma_20=105.0, sma_50=100.0, sma_200=90.0, history_points=120)
+    assert trend_context_from_snapshot(snap).trend_composite is None
+
+
+def test_trend_context_enriched_snapshot_scores():
+    from src.analysis.profit_management import trend_context_from_snapshot
+    snap = _snap(sma_20=105.0, sma_50=100.0, sma_200=90.0, history_points=252,
+                 adx_14=40.0, rsi_14=50.0, macd=2.0, macd_signal=1.0,
+                 macd_histogram=1.0)
+    ctx = trend_context_from_snapshot(snap)
+    assert ctx.trend_composite == pytest.approx(98.0)
+
+
+def test_missing_trend_data_never_extends_csp_target():
+    """The bug this guards: with no SMA data the old composite returned 50-60,
+    which passed the 'trend ≥ 50 → extend to 70%' gate. None must not extend."""
+    from src.analysis.profit_management import trend_context_from_snapshot
+    ctx = trend_context_from_snapshot(_snap())  # no anchors
+    d = decide_profit_target('CSP', 40, 40, 0.20, ctx, 'NORMAL')
+    assert d.target_pct == 50
+    assert d.extended_by_trend is False

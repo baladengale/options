@@ -420,9 +420,10 @@ def _capital_scarcity(pf, nlv) -> str:
 def _build_trend_map(pf, moomoo, yf_client) -> dict:
     """{ticker: TrendContext} for every option underlying, enriched once.
 
-    Reuses the shared _trend_composite so the exit layer sees the same 0-100
-    number the entry layer scored on. Best-effort: failures → no entry (caller
-    falls back to base-50% behavior for that ticker).
+    The trend composite comes from the canonical spec formula
+    (src.analysis.trend.trend_composite_from_snapshot: 0.5×alignment + 0.3×ADX
+    + 0.2×momentum). Best-effort: failures or missing anchors (short/absent
+    history) → no composite → caller falls back to base-50% behavior.
     """
     out: dict = {}
     for ticker in pf.option_tickers:

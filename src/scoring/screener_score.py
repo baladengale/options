@@ -31,7 +31,7 @@ def _cfg_val(getter, default=None):
 
 def _compute_ticker_score(
     snap: StockSnapshot,
-    trend_composite: float,
+    trend_composite: Optional[float],
     analyst_consensus: str,
     earnings_blackout: bool,
     insider_sentiment: str,
@@ -213,18 +213,24 @@ def _score_macro(regime: str, regime_mult: float, blackout: bool) -> float:
     return max(1.0, min(10.0, base))
 
 
-def _trend_composite(snap: StockSnapshot) -> float:
-    """0-100 trend composite (simplified from existing scoring)."""
+def _trend_composite(snap: StockSnapshot) -> Optional[float]:
+    """0-100 trend composite (simplified from existing scoring).
+
+    Returns None when the SMA anchors are missing — a silent neutral 50-60
+    would otherwise masquerade as a confirmed trend and wrongly extend CSP
+    profit targets (profit_management gate: trend ≥ 50 → 70% target).
+    """
+    if not snap.sma_50 or not snap.sma_200:
+        return None
     trend = 50.0
-    if snap.sma_50 and snap.sma_200:
-        if snap.last_price > snap.sma_50 > snap.sma_200:
-            trend = 75.0
-        elif snap.last_price > snap.sma_200:
-            trend = 60.0
-        elif snap.last_price > snap.sma_50:
-            trend = 40.0
-        else:
-            trend = 25.0
+    if snap.last_price > snap.sma_50 > snap.sma_200:
+        trend = 75.0
+    elif snap.last_price > snap.sma_200:
+        trend = 60.0
+    elif snap.last_price > snap.sma_50:
+        trend = 40.0
+    else:
+        trend = 25.0
     rsi = snap.rsi_14 or 50
     rsi_factor = 0.5 if 40 <= rsi <= 60 else 0.3
     return trend * (0.7 + rsi_factor)
