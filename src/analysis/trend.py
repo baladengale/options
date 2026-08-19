@@ -186,3 +186,49 @@ def compute_trend_composite(
     """
     score = 0.5 * trend_alignment + 0.3 * adx_strength + 0.2 * momentum
     return max(0.0, min(100.0, score))
+
+
+# ============================================================
+# Canonical snapshot → composite (SPECS Section 5.3, wired 2026-08)
+# ============================================================
+
+def trend_composite_from_snapshot(snap, strategy: str = 'CASH_SECURED_PUT') -> Optional[float]:
+    """TREND_COMPOSITE for one enriched StockSnapshot — the single definition
+    shared by the entry layer and the trend-modulated exit layer.
+
+        TREND_COMPOSITE = 0.5×ALIGNMENT + 0.3×ADX_STRENGTH + 0.2×MOMENTUM
+        MOMENTUM        = 0.5×RSI_SCORE + 0.5×MACD_SCORE      (spec §5.2 → §5.3)
+
+    Returns None when the alignment anchors are not trustworthy — any of
+    sma_20/sma_50/sma_200 missing, or fewer than 200 sessions of history
+    (a "SMA200" averaged over a short window is a mislabeled short average).
+    None means "no signal": profit-management gates must NOT extend on it
+    (they treat None as non-confirmation). Missing RSI/MACD degrade to
+    neutral momentum (50) — never to a bullish signal.
+    """
+    if getattr(snap, 'history_points', 0) < 200:
+        return None
+    if not (snap.sma_20 and snap.sma_50 and snap.sma_200):
+        return None
+    if not snap.last_price or snap.last_price <= 0:
+        return None
+
+    alignment = compute_trend_alignment(
+        snap.last_price, snap.sma_20, snap.sma_50, snap.sma_200, strategy)
+
+    # ADX missing → neutral strength (50), not "strong trend"
+    adx_strength = compute_adx_strength_score(snap.adx_14 or 20.0)
+
+    # Momentum: blend RSI + MACD scores; each missing half degrades to 50.
+    if snap.rsi_14 is not None:
+        rsi_score = compute_rsi_score(snap.rsi_14, strategy)
+    else:
+        rsi_score = 50.0
+    if snap.macd is not None and snap.macd_signal is not None and snap.macd_histogram is not None:
+        macd_score = compute_macd_score(
+            snap.macd, snap.macd_signal, snap.macd_histogram, None, strategy)
+    else:
+        macd_score = 50.0
+    momentum = 0.5 * rsi_score + 0.5 * macd_score
+
+    return compute_trend_composite(alignment, adx_strength, momentum)

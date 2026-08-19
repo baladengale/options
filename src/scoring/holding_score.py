@@ -159,6 +159,27 @@ def _ticker_frequency_ok(pos: dict, today: date, orders: list) -> tuple[bool, st
     return True, ''
 
 
+def _trend_label(strategy: str, tc) -> str:
+    """Compact strategy-aware trend tag for decision strings.
+
+    ▲ uptrend / → flat / ▼ downtrend. The ⚠️ marks the direction that HURTS
+    the position: a downtrend for short puts (stock falls into the strike),
+    an uptrend for short calls (stock runs into the strike).
+    """
+    if tc is None:
+        return 'trend —'
+    if tc >= 60:
+        tag = f'trend {tc:.0f}▲'
+        danger = strategy == 'CC'
+    elif tc < 40:
+        tag = f'trend {tc:.0f}▼'
+        danger = strategy == 'CSP'
+    else:
+        tag = f'trend {tc:.0f}→'
+        danger = False
+    return tag + ('⚠️' if danger else '')
+
+
 def _score_option(pos: dict, current, profit_captured: float, pl: float,
                   today: date, yf_client, trend_ctx=None, capital_scarcity=None,
                   orders=None, csp_paused: bool = False,
@@ -248,10 +269,8 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
         # delta gates later in this function overwrite this string when they
         # fire, so "below stop tiers" holds by construction.
         loss_multiple = abs(profit_captured) / 100
-        tc = pd.trend_context.trend_composite if pd.trend_context else None
         decision = (f'HOLD (underwater {profit_captured:.0f}% — {loss_multiple:.2f}× premium, '
-                    f'below stop tiers'
-                    + (f', trend {tc:.0f}' if tc is not None else '') + ')')
+                    f'below stop tiers)')
     else:
         decision = (f'HOLD ({profit_captured:.0f}% < {pd.target_pct:.0f}% target'
                     + (f', trend-extended' if pd.extended_by_trend else '') + ')')
@@ -378,6 +397,15 @@ def _score_option(pos: dict, current, profit_captured: float, pl: float,
             score += 1.5
             if 'CLOSE' not in decision:
                 decision = '🔴 UNDERWATER — Monitor thesis, not price'
+
+    # Trend context tag — every non-action decision carries the same
+    # strategy-aware trend signal (uptrend helps CSP, hurts CC). Action
+    # decisions (CLOSE/ROLL/STOP tiers) skip it; 'trend —' flags missing data.
+    if 'trend' not in decision:
+        dl = decision.lower()
+        if any(m in dl for m in ('hold', 'monitor', 'review', 'management', 'expiring')):
+            tc = pd.trend_context.trend_composite if pd.trend_context else None
+            decision += f', {_trend_label(strategy, tc)}'
 
     return max(1.0, min(10.0, score)), decision, pd
 

@@ -294,3 +294,64 @@ class TestTrendComposite:
         from analysis.trend import compute_trend_composite
         score = compute_trend_composite(200.0, 200.0, 200.0)
         assert score <= 100.0
+
+
+# ============================================================
+# Canonical snapshot → composite wiring (SPECS §5.3)
+# ============================================================
+
+class TestTrendCompositeFromSnapshot:
+    """Validate trend_composite_from_snapshot — the single definition shared
+    by the entry layer and the trend-modulated exit layer."""
+
+    def _snap(self, **kw):
+        from src.data.models import StockSnapshot
+        d = dict(
+            ticker='TEST', name='Test', last_price=110.0,
+            sma_20=105.0, sma_50=100.0, sma_200=90.0,
+            adx_14=40.0, rsi_14=50.0,
+            macd=2.0, macd_signal=1.0, macd_histogram=1.0,
+            history_points=252,
+        )
+        d.update(kw)
+        return StockSnapshot(**d)
+
+    def test_full_bullish_composite(self):
+        """alignment 100 + ADX 100 + momentum (0.5×100 RSI + 0.5×80 MACD)=90
+        → 0.5×100 + 0.3×100 + 0.2×90 = 98."""
+        from analysis.trend import trend_composite_from_snapshot
+        assert trend_composite_from_snapshot(self._snap()) == pytest.approx(98.0)
+
+    def test_bearish_composite(self):
+        """Price below the whole SMA stack, strong ADX, oversold RSI,
+        accelerating-bearish MACD."""
+        from analysis.trend import trend_composite_from_snapshot
+        snap = self._snap(
+            last_price=80.0, sma_20=95.0, sma_50=100.0, sma_200=110.0,
+            adx_14=40.0, rsi_14=25.0,
+            macd=-2.0, macd_signal=-1.0, macd_histogram=-1.0,
+        )
+        # alignment 0, ADX 100, RSI(CSP,25)=15, MACD bearish accelerating=30
+        # momentum = 22.5 → 0 + 30 + 4.5 = 34.5
+        assert trend_composite_from_snapshot(snap) == pytest.approx(34.5)
+
+    def test_missing_sma_returns_none(self):
+        """No SMA anchors → None, never a silent neutral-bullish number."""
+        from analysis.trend import trend_composite_from_snapshot
+        assert trend_composite_from_snapshot(self._snap(sma_50=None)) is None
+        assert trend_composite_from_snapshot(self._snap(sma_200=None)) is None
+        assert trend_composite_from_snapshot(self._snap(sma_20=None)) is None
+
+    def test_short_history_returns_none(self):
+        """A 'SMA200' averaged over <200 sessions is a mislabeled short
+        average — composite must refuse (no-data honesty)."""
+        from analysis.trend import trend_composite_from_snapshot
+        assert trend_composite_from_snapshot(self._snap(history_points=120)) is None
+
+    def test_missing_momentum_degrades_to_neutral_not_bullish(self):
+        """RSI/MACD absent → momentum 50 → 0.5×100 + 0.3×100 + 0.2×50 = 90.
+        The composite stays available on alignment+ADX alone but is NOT
+        inflated by absent signals."""
+        from analysis.trend import trend_composite_from_snapshot
+        snap = self._snap(rsi_14=None, macd=None, macd_signal=None, macd_histogram=None)
+        assert trend_composite_from_snapshot(snap) == pytest.approx(90.0)

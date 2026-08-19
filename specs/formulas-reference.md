@@ -158,6 +158,30 @@ ADX = smoothed DX over `period`      ← this impl returns DX as an ADX approxim
 
 ---
 
+## 6b. Trend Composite (TREND_COMPOSITE)
+
+**File**: `src/analysis/trend.py:195` (`trend_composite_from_snapshot`) — the single canonical definition, shared by the entry layer and the trend-modulated exit layer (`trend_context_from_snapshot` in `src/analysis/profit_management.py`). Wired 2026-08-19 (previously the exit layer used the simplified SMA-bucket `_trend_composite` in `src/scoring/screener_score.py`, which ignored ADX and MACD).
+
+```
+TREND_COMPOSITE = 0.5 × TREND_ALIGNMENT + 0.3 × ADX_STRENGTH + 0.2 × MOMENTUM
+MOMENTUM        = 0.5 × RSI_SCORE + 0.5 × MACD_SCORE
+
+TREND_ALIGNMENT = (# bullish of {price>SMA20, SMA20>SMA50, SMA50>SMA200}) / 3 × 100
+ADX_STRENGTH    = bucket(ADX): ≥40→100, ≥25→75, ≥20→50, else→25
+RSI_SCORE       = strategy buckets per §4 use  (CSP: neutral 45–55 → 100, extremes → 10)
+MACD_SCORE      = bullish-accelerating 100 … bearish-accelerating 30 (spec §5.2)
+```
+
+**No-data honesty**: returns `None` when any of `sma_20/50/200` is missing **or** `history_points < 200` — a "SMA200" averaged over a short window is a mislabeled short average, and a silent neutral 50–60 previously passed the `trend ≥ 50 → extend CSP target to 70%` gate on zero data. `None` means "no signal": the profit gates treat it as non-confirmation. Missing RSI/MACD degrade to neutral momentum (50) — never to a bullish signal.
+
+**Derivation / rationale**: the composite-vote pattern used by institutional trend systems — a direction vote (MA alignment), a strength filter (ADX, keeps you out of ranges), and a momentum trigger (MACD + RSI); see [thinkorswim CAM](https://toslc.thinkorswim.com/center/reference/Tech-Indicators/studies-library/C-D/CAM-Indicator) (coordinated ADX+MACD), Murphy's *The Visual Investor* [chapter 6](https://onlinelibrary.wiley.com/doi/10.1002/9781119197652.ch6), and [VaultCharts Regime-Trend-Momentum](https://www.vaultcharts.com/strategies/regime-trend-momentum). Weights 0.5/0.3/0.2 weight direction over trigger, per SPECS §5.3.
+
+**Use**: CSP/CC trend extension gates (`profit_management.py`): composite ≥ 70 + sentiment + IVR → 85% target; ≥ 50 + sentiment → 70% target; CC never extends, rolls up-and-out instead. Loss-side 2× overlay: composite < 40 → treat alert as hard stop.
+
+**Validation**: ✓ Formula matches SPECS §5.3 exactly; component formulas validated in §4–§6 above. ⚠ Thresholds (70/85%, ≥ 50/70) remain unvalidated by backtest (see `production-deployment.md` Gap A). The ADX input is the DX approximation (§6).
+
+---
+
 ## 7. Beta vs SPY
 
 **File**: `src/data/compute.py:174` (`compute_beta`, ≥60 days of daily log returns).

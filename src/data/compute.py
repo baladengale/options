@@ -215,6 +215,7 @@ def enrich_stock_snapshot(
 ):
     """Compute all technical indicators and set them on the snapshot."""
     closes = _closes(history)
+    snap.history_points = len(closes)
 
     snap.sma_20 = compute_sma(closes, 20)
     snap.sma_50 = compute_sma(closes, 50)
